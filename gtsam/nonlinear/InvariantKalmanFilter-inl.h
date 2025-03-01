@@ -73,10 +73,11 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
   T measured = motionFactor.measured();
   T actual = x_.between(predicted);
   Vector originalError = T::Logmap(measured.between(actual));
-  Vector invariantError = x_.AdjointMap() * originalError;  // Changed Adjoint to AdjointMap
+  Vector invariantError = predicted.AdjointMap() * originalError;  // Changed Adjoint to AdjointMap
 
   // Update linearization point with invariant error
-  linearizationPoint.update(keys[1], T::Expmap(invariantError) * x_);
+//   linearizationPoint.update(keys[1], T::Expmap(invariantError) * predicted);
+  linearizationPoint.update(keys[1], predicted.compose(T::Expmap(invariantError)));
 
   // Linearize with transformed linearization point
   GaussianFactor::shared_ptr gaussianFactor = motionFactor.linearize(linearizationPoint);
@@ -109,7 +110,8 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::update(
   Vector invariantError = x_.AdjointMap() * originalError;
 
   // Update linearization point with invariant error
-  linearizationPoint.update(keys[0], T::Expmap(invariantError) * x_);
+//   linearizationPoint.update(keys[0], T::Expmap(invariantError) * x_);
+  linearizationPoint.update(keys[0], x_.compose(T::Expmap(invariantError)));
 
   // Linearize with transformed linearization point
   GaussianFactor::shared_ptr gaussianFactor = 
