@@ -85,6 +85,7 @@ class InvariantKalmanFilter {
    * Update step using left-invariant error
    * The measurement model should use  left-invariant observations
    */
+  
   T update(const PriorFactor<T>& measurementFactor);
 
   /// Return current predictive (if called after predict)/posterior (if called after update)

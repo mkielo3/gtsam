@@ -70,7 +70,7 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
   T relative = x0.between(x1);
   T measured = motionFactor.measured();  // Valid for BetweenFactor<T>
   Vector originalError = T::Logmap(measured.between(relative));
-  Vector invariantError = x0.Adjoint(originalError);
+  Vector invariantError = x0.AdjointMap() * originalError;
 
   // Update linearization point with invariant error
   linearizationPoint.update(keys[1], T::Expmap(invariantError) * x0);
@@ -121,7 +121,7 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::update(
 
   // Use measurementFactor.prior() instead of measured()
   Vector originalError = T::Logmap(measurementFactor.prior().between(linearizationPoint.at<T>(keys[0])));
-  Vector invariantError = linearizationPoint.at<T>(keys[0]).Adjoint(originalError);
+  Vector invariantError = linearizationPoint.at<T>(keys[0]).AdjointMap() * originalError;
   linearizationPoint.update(keys[0], T::Expmap(invariantError) * linearizationPoint.at<T>(keys[0]));
 
   linearFactorGraph.push_back(measurementFactor.linearize(linearizationPoint));

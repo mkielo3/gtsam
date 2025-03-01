@@ -738,9 +738,9 @@ class ExtendedKalmanFilter {
 template<T = {gtsam::Pose2, gtsam::Pose3, gtsam::Rot2, gtsam::Rot3}>
 class InvariantKalmanFilter {
     InvariantKalmanFilter(size_t key_initial, T x_initial, gtsam::noiseModel::Gaussian* P_initial);
-    T predict(const gtsam::NoiseModelFactor& motionFactor);
-    T update(const gtsam::NoiseModelFactor& measurementFactor);
-    gtsam::JacobianFactor* Density() const;
+    T predict(const gtsam::BetweenFactor<T>& motionFactor);
+    T update(const gtsam::PriorFactor<T>& measurementFactor);
+	gtsam::JacobianFactor* Density() const;
 };
 
 }  // namespace gtsam
