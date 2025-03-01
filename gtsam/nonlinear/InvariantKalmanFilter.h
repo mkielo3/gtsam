@@ -11,7 +11,7 @@
 
 /**
  * @file    InvariantKalmanFilter.h
- * @brief   Class to perform Right Invariant Kalman Filtering using nonlinear factor graphs
+ * @brief   Class to perform Left Invariant Kalman Filtering using nonlinear factor graphs
  * @author  Matthew Kielo
  * @author  Scott Baker
  */
@@ -25,9 +25,9 @@
 namespace gtsam {
 
 /**
- * This is a Right-Invariant Kalman Filter class implemented using GTSAM's factor graphs.
+ * This is a Left-Invariant Kalman Filter class implemented using GTSAM's factor graphs.
  * The key difference from the standard EKF is that it operates on Lie groups and uses
- * a right-invariant error definition: eta = x̂ * x^{-1}
+ * a left-invariant error definition: eta = x^{-1} * x̂
  *
  * The filter maintains the mean state as a Lie group element and transforms
  * covariances using the adjoint map.
@@ -47,7 +47,7 @@ class InvariantKalmanFilter {
 
  protected:
   T x_;                                     // linearization point
-  JacobianFactor::shared_ptr priorFactor_;  // Gaussian density on the right-invariant error
+  JacobianFactor::shared_ptr priorFactor_;  // density on the left-invariant error
 
   static T solve_(const GaussianFactorGraph& linearFactorGraph, const Values& linearizationPoints,
                   Key x, JacobianFactor::shared_ptr* newPrior);
@@ -74,14 +74,14 @@ class InvariantKalmanFilter {
   /// @{
 
   /**
-   * Predict step using right-invariant error
-   * The motion model should use right-invariant observations
+   * Predict step using left-invariant error
+   * The motion model should use left-invariant observations
    */
   T predict(const NoiseModelFactor& motionFactor);
 
   /**
-   * Update step using right-invariant error
-   * The measurement model should use right-invariant observations
+   * Update step using left-invariant error
+   * The measurement model should use  left-invariant observations
    */
   T update(const NoiseModelFactor& measurementFactor);
 
