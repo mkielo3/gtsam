@@ -21,6 +21,8 @@
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 
 namespace gtsam {
 
@@ -77,13 +79,13 @@ class InvariantKalmanFilter {
    * Predict step using left-invariant error
    * The motion model should use left-invariant observations
    */
-  T predict(const NoiseModelFactor& motionFactor);
+  T predict(const BetweenFactor<T>& motionFactor);
 
   /**
    * Update step using left-invariant error
    * The measurement model should use  left-invariant observations
    */
-  T update(const NoiseModelFactor& measurementFactor);
+  T update(const PriorFactor<T>& measurementFactor);
 
   /// Return current predictive (if called after predict)/posterior (if called after update)
   const JacobianFactor::shared_ptr Density() const {

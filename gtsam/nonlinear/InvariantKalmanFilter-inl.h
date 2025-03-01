@@ -5,8 +5,10 @@
 #include <gtsam/linear/GaussianBayesNet.h>
 #include <gtsam/linear/GaussianFactorGraph.h>
 #include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 #include <gtsam/linear/JacobianFactor.h>
 #include <gtsam/base/Lie.h>
+#include <memory>
 
 namespace gtsam {
 
@@ -18,7 +20,7 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::solve_(
     JacobianFactor::shared_ptr* newPrior) {
   const Ordering lastKeyAsOrdering{lastKey};
   const GaussianConditional::shared_ptr marginal =
-    linearFactorGraph.marginalMultifrontalBayesNet(lastKeyAsOrdering)->front();
+      linearFactorGraph.marginalMultifrontalBayesNet(lastKeyAsOrdering)->front();
 
   VectorValues result = marginal->solve(VectorValues());
   const T& current = linearizationPoint.at<T>(lastKey);
@@ -27,10 +29,10 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::solve_(
   assert(marginal->nrFrontals() == 1);
   assert(marginal->nrParents() == 0);
   *newPrior = JacobianFactor::shared_ptr(
-    new JacobianFactor(marginal->keys().front(),
-      marginal->getA(marginal->begin()),
-      marginal->getb() - marginal->getA(marginal->begin()) * result[lastKey],
-      marginal->get_model()));
+      new JacobianFactor(marginal->keys().front(),
+                         marginal->getA(marginal->begin()),
+                         marginal->getb() - marginal->getA(marginal->begin()) * result[lastKey],
+                         marginal->get_model()));
 
   return x;
 }
@@ -41,15 +43,16 @@ InvariantKalmanFilter<VALUE>::InvariantKalmanFilter(
     Key key_initial, T x_initial, noiseModel::Gaussian::shared_ptr P_initial)
     : x_(x_initial) {
   int n = traits<T>::GetDimension(x_initial);
-  priorFactor_ = typename JacobianFactor::shared_ptr(  // Add typename here
-    new JacobianFactor(key_initial, P_initial->R(), Vector::Zero(n),
-        noiseModel::Unit::Create(n)));
+  priorFactor_ = typename JacobianFactor::shared_ptr(
+      new JacobianFactor(key_initial, P_initial->R(), Vector::Zero(n),
+                         noiseModel::Unit::Create(n)));
 }
 
 /* ************************************************************************* */
+// Updated: Accepts a BetweenFactor<T> which provides measured() and noiseModel()
 template<class VALUE>
 typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
-    const NoiseModelFactor& motionFactor) {
+    const BetweenFactor<T>& motionFactor) {
   const auto keys = motionFactor.keys();
 
   // Create factor graph and add prior
@@ -65,15 +68,16 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
   const T& x0 = linearizationPoint.at<T>(keys[0]);
   const T& x1 = linearizationPoint.at<T>(keys[1]);
   T relative = x0.between(x1);
-  T measured = motionFactor.measured();
+  T measured = motionFactor.measured();  // Valid for BetweenFactor<T>
   Vector originalError = T::Logmap(measured.between(relative));
   Vector invariantError = x0.Adjoint(originalError);
-  
+
   // Update linearization point with invariant error
   linearizationPoint.update(keys[1], T::Expmap(invariantError) * x0);
 
   // Add motion factor and solve
   linearFactorGraph.push_back(motionFactor.linearize(linearizationPoint));
+
   GaussianBayesNet::shared_ptr bayesNet = linearFactorGraph.eliminateSequential(Ordering(keys));
   VectorValues result = bayesNet->optimize();
 
@@ -83,25 +87,30 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
   // Transform covariance using Adjoint
   Matrix Ad = x_predict.AdjointMap();
   Matrix P = priorFactor_->get_model()->covariance();
-  Matrix Q = motionFactor.get_noiseModel()->covariance();
+  
+  // Cast noise model to a Gaussian noise model to access covariance()
+  auto gaussianNoise = std::dynamic_pointer_cast<noiseModel::Gaussian>(motionFactor.noiseModel());
+  Matrix Q = gaussianNoise->covariance();
+  
   Matrix P_pred = Ad * P * Ad.transpose() + Q;
   auto P_updated = noiseModel::Diagonal::Variances(P_pred.diagonal());
 
   // Create new prior factor for next step
   priorFactor_ = JacobianFactor::shared_ptr(
-    new JacobianFactor(keys[1],
-      P_updated->R(),
-      bayesNet->back()->d() - bayesNet->back()->R() * result[keys[1]],
-      P_updated));
+      new JacobianFactor(keys[1],
+                         P_updated->R(),
+                         bayesNet->back()->d() - bayesNet->back()->R() * result[keys[1]],
+                         P_updated));
 
   x_ = x_predict;
   return x_;
 }
 
 /* ************************************************************************* */
+// Updated: Accepts a PriorFactor<T> which provides prior() instead of measured()
 template<class VALUE>
 typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::update(
-    const NoiseModelFactor& measurementFactor) {
+    const PriorFactor<T>& measurementFactor) {
   const auto keys = measurementFactor.keys();
 
   GaussianFactorGraph linearFactorGraph;
@@ -109,8 +118,9 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::update(
 
   Values linearizationPoint;
   linearizationPoint.insert(keys[0], x_);
-  
-  Vector originalError = T::Logmap(measurementFactor.measured().between(linearizationPoint.at<T>(keys[0])));
+
+  // Use measurementFactor.prior() instead of measured()
+  Vector originalError = T::Logmap(measurementFactor.prior().between(linearizationPoint.at<T>(keys[0])));
   Vector invariantError = linearizationPoint.at<T>(keys[0]).Adjoint(originalError);
   linearizationPoint.update(keys[0], T::Expmap(invariantError) * linearizationPoint.at<T>(keys[0]));
 
