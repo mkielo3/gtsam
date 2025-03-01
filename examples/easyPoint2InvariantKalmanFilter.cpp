@@ -1,77 +1,176 @@
+// /**
+//  * @file easyPose2InvariantKalmanFilter.cpp
+//  * Simple Left-Invariant Kalman filter on a moving 2D pose using factor graphs
+//  */
+
+//  #include <gtsam/nonlinear/InvariantKalmanFilter.h>
+//  #include <gtsam/inference/Symbol.h>
+//  #include <gtsam/nonlinear/PriorFactor.h>
+//  #include <gtsam/slam/BetweenFactor.h>
+//  #include <gtsam/geometry/Pose2.h>
+ 
+//  using namespace std;
+//  using namespace gtsam;
+ 
+//  int main() {
+//    // Create the Kalman Filter initialization point
+//    Pose2 x_initial(0.0, 0.0, 0.0);
+//    // Initial uncertainty in body frame
+//    SharedDiagonal P_initial = noiseModel::Diagonal::Sigmas(Vector3(0.1, 0.1, 0.1));
+ 
+//    Symbol x0('x',0);
+//    InvariantKalmanFilter<Pose2> ikf(x0, x_initial, P_initial);
+ 
+//    // Process noise in body frame
+//    SharedDiagonal Q = noiseModel::Diagonal::Sigmas(Vector3(0.1, 0.1, 0.1));
+ 
+//    // Predict step: Moving forward 1m with no rotation
+//    Symbol x1('x',1);
+//    Pose2 difference(1.0, 0.0, 0.0);
+//    BetweenFactor<Pose2> factor1(x0, x1, difference, Q);
+//    Pose2 x1_predict = ikf.predict(factor1);
+//    traits<Pose2>::Print(x1_predict, "X1 Predict");
+ 
+//    // Measurement noise
+//    SharedDiagonal R = noiseModel::Diagonal::Sigmas(Vector3(0.25, 0.25, 0.25));
+ 
+//    // Update step with measurement
+//    Pose2 z1(1.0, 0.0, 0.0);
+//    PriorFactor<Pose2> factor2(x1, z1, R);
+//    Pose2 x1_update = ikf.update(factor2);
+//    traits<Pose2>::Print(x1_update, "X1 Update");
+ 
+//    // Continue with remaining predictions and updates...
+//    return 0;
+//  }
+
+/* ----------------------------------------------------------------------------
+
+ * GTSAM Copyright 2010, Georgia Tech Research Corporation,
+ * Atlanta, Georgia 30332-0415
+ * All Rights Reserved
+ * Authors: Frank Dellaert, et al. (see THANKS for the full author list)
+
+ * See LICENSE for the license information
+
+ * -------------------------------------------------------------------------- */
+
 /**
- * @file easyPose2InvariantKalmanFilter.cpp
- * Simple Invariant Kalman filter on a moving 2D pose using factor graphs
+ * @file easyPoint2KalmanFilter.cpp
+ *
+ * simple linear Kalman filter on a moving 2D point, but done using factor graphs
+ * This example uses the templated ExtendedKalmanFilter class to perform the same
+ * operations as in elaboratePoint2KalmanFilter
+ *
+ * @date Aug 19, 2011
+ * @author Frank Dellaert
+ * @author Stephen Williams
  */
 
- #include <gtsam/nonlinear/InvariantKalmanFilter.h>
+ #include <gtsam/nonlinear/ExtendedKalmanFilter.h>
  #include <gtsam/inference/Symbol.h>
  #include <gtsam/nonlinear/PriorFactor.h>
  #include <gtsam/slam/BetweenFactor.h>
- #include <gtsam/geometry/Pose2.h>
+ #include <gtsam/geometry/Point2.h>
  
  using namespace std;
  using namespace gtsam;
  
+ // Define Types for Linear System Test
+ typedef Point2 LinearMeasurement;
+ 
  int main() {
+ 
    // Create the Kalman Filter initialization point
-   // Pose2(x, y, theta)
-   Pose2 x_initial(0.0, 0.0, 0.0);
-   // Noise model for x, y, theta
-   SharedDiagonal P_initial = noiseModel::Diagonal::Sigmas(Vector3(0.1, 0.1, 0.1));
+   Point2 x_initial(0.0, 0.0);
+   SharedDiagonal P_initial = noiseModel::Diagonal::Sigmas(Vector2(0.1, 0.1));
  
    // Create Key for initial pose
    Symbol x0('x',0);
  
-   // Create an InvariantKalmanFilter object
-   InvariantKalmanFilter<Pose2> ikf(x0, x_initial, P_initial);
+   // Create an ExtendedKalmanFilter object
+   ExtendedKalmanFilter<Point2> ekf(x0, x_initial, P_initial);
  
-   // Process noise for motion
-   SharedDiagonal Q = noiseModel::Diagonal::Sigmas(Vector3(0.1, 0.1, 0.1), true);
+   // Now predict the state at t=1, i.e. argmax_{x1} P(x1) = P(x1|x0) P(x0)
+   // In Kalman Filter notation, this is x_{t+1|t} and P_{t+1|t}
+   // For the Kalman Filter, this requires a motion model, f(x_{t}) = x_{t+1|t)
+   // Assuming the system is linear, this will be of the form f(x_{t}) = F*x_{t} + B*u_{t} + w
+   // where F is the state transition model/matrix, B is the control input model,
+   // and w is zero-mean, Gaussian white noise with covariance Q
+   // Note, in some models, Q is actually derived as G*w*G^T where w models uncertainty of some
+   // physical property, such as velocity or acceleration, and G is derived from physics
+   //
+   // For the purposes of this example, let us assume we are using a constant-position model and
+   // the controls are driving the point to the right at 1 m/s. Then, F = [1 0 ; 0 1], B = [1 0 ; 0 1]
+   // and u = [1 ; 0]. Let us also assume that the process noise Q = [0.1 0 ; 0 0.1].
+   Vector u = Vector2(1.0, 0.0);
+   SharedDiagonal Q = noiseModel::Diagonal::Sigmas(Vector2(0.1, 0.1), true);
  
-   // Predict step: Moving forward 1m with no rotation
+   // This simple motion can be modeled with a BetweenFactor
+   // Create Key for next pose
    Symbol x1('x',1);
-   // Create motion: forward 1m with no rotation
-   Pose2 difference(1.0, 0.0, 0.0);
-   BetweenFactor<Pose2> factor1(x0, x1, difference, Q);
+   // Predict delta based on controls
+   Point2 difference(1,0);
+   // Create Factor
+   BetweenFactor<Point2> factor1(x0, x1, difference, Q);
  
-   // Predict the new value
-   Pose2 x1_predict = ikf.predict(factor1);
-   traits<Pose2>::Print(x1_predict, "X1 Predict");
+   // Predict the new value with the EKF class
+   Point2 x1_predict = ekf.predict(factor1);
+   traits<Point2>::Print(x1_predict, "X1 Predict");
  
-   // Measurement noise
-   SharedDiagonal R = noiseModel::Diagonal::Sigmas(Vector3(0.25, 0.25, 0.25), true);
  
-   // Update step with measurement
-   Pose2 z1(1.0, 0.0, 0.0);  // Measured pose
-   PriorFactor<Pose2> factor2(x1, z1, R);
-   Pose2 x1_update = ikf.update(factor2);
-   traits<Pose2>::Print(x1_update, "X1 Update");
  
-   // Second prediction
+   // Now, a measurement, z1, has been received, and the Kalman Filter should be "Updated"/"Corrected"
+   // This is equivalent to saying P(x1|z1) ~ P(z1|x1)*P(x1)
+   // For the Kalman Filter, this requires a measurement model h(x_{t}) = \hat{z}_{t}
+   // Assuming the system is linear, this will be of the form h(x_{t}) = H*x_{t} + v
+   // where H is the observation model/matrix, and v is zero-mean, Gaussian white noise with covariance R
+   //
+   // For the purposes of this example, let us assume we have something like a GPS that returns
+   // the current position of the robot. Then H = [1 0 ; 0 1]. Let us also assume that the measurement noise
+   // R = [0.25 0 ; 0 0.25].
+   SharedDiagonal R = noiseModel::Diagonal::Sigmas(Vector2(0.25, 0.25), true);
+ 
+   // This simple measurement can be modeled with a PriorFactor
+   Point2 z1(1.0, 0.0);
+   PriorFactor<Point2> factor2(x1, z1, R);
+ 
+   // Update the Kalman Filter with the measurement
+   Point2 x1_update = ekf.update(factor2);
+   traits<Point2>::Print(x1_update, "X1 Update");
+ 
+ 
+ 
+   // Do the same thing two more times...
+   // Predict
    Symbol x2('x',2);
-   difference = Pose2(1.0, 0.0, 0.0);  // Move forward 1m again
-   BetweenFactor<Pose2> factor3(x1, x2, difference, Q);
-   Pose2 x2_predict = ikf.predict(factor3);
-   traits<Pose2>::Print(x2_predict, "X2 Predict");
-   
-   // Second update
-   Pose2 z2(2.0, 0.0, 0.0);
-   PriorFactor<Pose2> factor4(x2, z2, R);
-   Pose2 x2_update = ikf.update(factor4);
-   traits<Pose2>::Print(x2_update, "X2 Update");
+   difference = Point2(1,0);
+   BetweenFactor<Point2> factor3(x1, x2, difference, Q);
+   Point2 x2_predict = ekf.predict(factor3);
+   traits<Point2>::Print(x2_predict, "X2 Predict");
  
-   // Third prediction
+   // Update
+   Point2 z2(2.0, 0.0);
+   PriorFactor<Point2> factor4(x2, z2, R);
+   Point2 x2_update = ekf.update(factor4);
+   traits<Point2>::Print(x2_update, "X2 Update");
+ 
+ 
+ 
+   // Do the same thing one more time...
+   // Predict
    Symbol x3('x',3);
-   difference = Pose2(1.0, 0.0, 0.0);
-   BetweenFactor<Pose2> factor5(x2, x3, difference, Q);
-   Pose2 x3_predict = ikf.predict(factor5);
-   traits<Pose2>::Print(x3_predict, "X3 Predict");
+   difference = Point2(1,0);
+   BetweenFactor<Point2> factor5(x2, x3, difference, Q);
+   Point2 x3_predict = ekf.predict(factor5);
+   traits<Point2>::Print(x3_predict, "X3 Predict");
  
-   // Third update
-   Pose2 z3(3.0, 0.0, 0.0);
-   PriorFactor<Pose2> factor6(x3, z3, R);
-   Pose2 x3_update = ikf.update(factor6);
-   traits<Pose2>::Print(x3_update, "X3 Update");
+   // Update
+   Point2 z3(3.0, 0.0);
+   PriorFactor<Point2> factor6(x3, z3, R);
+   Point2 x3_update = ekf.update(factor6);
+   traits<Point2>::Print(x3_update, "X3 Update");
  
    return 0;
  }
+ 
