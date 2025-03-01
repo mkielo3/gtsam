@@ -18,21 +18,26 @@ typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::solve_(
     const GaussianFactorGraph& linearFactorGraph,
     const Values& linearizationPoint, Key lastKey,
     JacobianFactor::shared_ptr* newPrior) {
+  // Compute the marginal on the last key
   const Ordering lastKeyAsOrdering{lastKey};
   const GaussianConditional::shared_ptr marginal =
       linearFactorGraph.marginalMultifrontalBayesNet(lastKeyAsOrdering)->front();
 
+  // Extract the current estimate in the body frame
   VectorValues result = marginal->solve(VectorValues());
   const T& current = linearizationPoint.at<T>(lastKey);
+  
+  // For left-invariant: update using Expmap in body frame
   T x = current.compose(traits<T>::Expmap(result[lastKey]));
 
+  // Create new prior factor for next iteration
   assert(marginal->nrFrontals() == 1);
   assert(marginal->nrParents() == 0);
-  *newPrior = JacobianFactor::shared_ptr(
-      new JacobianFactor(marginal->keys().front(),
-                         marginal->getA(marginal->begin()),
-                         marginal->getb() - marginal->getA(marginal->begin()) * result[lastKey],
-                         marginal->get_model()));
+  *newPrior = std::make_shared<JacobianFactor>(
+      marginal->keys().front(),
+      marginal->getA(marginal->begin()),
+      marginal->getb() - marginal->getA(marginal->begin()) * result[lastKey],
+      marginal->get_model());
 
   return x;
 }
@@ -49,84 +54,72 @@ InvariantKalmanFilter<VALUE>::InvariantKalmanFilter(
 }
 
 /* ************************************************************************* */
-// Updated: Accepts a BetweenFactor<T> which provides measured() and noiseModel()
 template<class VALUE>
 typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::predict(
     const BetweenFactor<T>& motionFactor) {
   const auto keys = motionFactor.keys();
-
+  
   // Create factor graph and add prior
   GaussianFactorGraph linearFactorGraph;
   linearFactorGraph.push_back(priorFactor_);
 
-  // Setup linearization points
+  // Setup initial linearization point
   Values linearizationPoint;
   linearizationPoint.insert(keys[0], x_);
-  linearizationPoint.insert(keys[1], x_);
+  T predicted = x_.compose(motionFactor.measured());
+  linearizationPoint.insert(keys[1], predicted);
 
-  // Compute invariant error for motion model
-  const T& x0 = linearizationPoint.at<T>(keys[0]);
-  const T& x1 = linearizationPoint.at<T>(keys[1]);
-  T relative = x0.between(x1);
-  T measured = motionFactor.measured();  // Valid for BetweenFactor<T>
-  Vector originalError = T::Logmap(measured.between(relative));
-  Vector invariantError = x0.AdjointMap() * originalError;
+  // Compute original error and transform it using adjoint
+  T measured = motionFactor.measured();
+  T actual = x_.between(predicted);
+  Vector originalError = T::Logmap(measured.between(actual));
+  Vector invariantError = x_.AdjointMap() * originalError;  // Changed Adjoint to AdjointMap
 
   // Update linearization point with invariant error
-  linearizationPoint.update(keys[1], T::Expmap(invariantError) * x0);
+  linearizationPoint.update(keys[1], T::Expmap(invariantError) * x_);
 
-  // Add motion factor and solve
-  linearFactorGraph.push_back(motionFactor.linearize(linearizationPoint));
+  // Linearize with transformed linearization point
+  GaussianFactor::shared_ptr gaussianFactor = motionFactor.linearize(linearizationPoint);
+  linearFactorGraph.push_back(gaussianFactor);
 
-  GaussianBayesNet::shared_ptr bayesNet = linearFactorGraph.eliminateSequential(Ordering(keys));
-  VectorValues result = bayesNet->optimize();
+  // Solve and update state
+  x_ = solve_(linearFactorGraph, linearizationPoint, keys[1], &priorFactor_);
 
-  // Compute predicted state
-  T x_predict = linearizationPoint.at<T>(keys[1]).compose(traits<T>::Expmap(result[keys[1]]));
-
-  // Transform covariance using Adjoint
-  Matrix Ad = x_predict.AdjointMap();
-  Matrix P = priorFactor_->get_model()->covariance();
-  
-  // Cast noise model to a Gaussian noise model to access covariance()
-  auto gaussianNoise = std::dynamic_pointer_cast<noiseModel::Gaussian>(motionFactor.noiseModel());
-  Matrix Q = gaussianNoise->covariance();
-  
-  Matrix P_pred = Ad * P * Ad.transpose() + Q;
-  auto P_updated = noiseModel::Diagonal::Variances(P_pred.diagonal());
-
-  // Create new prior factor for next step
-  priorFactor_ = JacobianFactor::shared_ptr(
-      new JacobianFactor(keys[1],
-                         P_updated->R(),
-                         bayesNet->back()->d() - bayesNet->back()->R() * result[keys[1]],
-                         P_updated));
-
-  x_ = x_predict;
   return x_;
 }
 
 /* ************************************************************************* */
-// Updated: Accepts a PriorFactor<T> which provides prior() instead of measured()
+
 template<class VALUE>
 typename InvariantKalmanFilter<VALUE>::T InvariantKalmanFilter<VALUE>::update(
     const PriorFactor<T>& measurementFactor) {
-  const auto keys = measurementFactor.keys();
-
+  // Create factor graph and add prior
   GaussianFactorGraph linearFactorGraph;
   linearFactorGraph.push_back(priorFactor_);
 
+  // Get keys and initial linearization point
+  const KeyVector keys = measurementFactor.keys();
   Values linearizationPoint;
   linearizationPoint.insert(keys[0], x_);
 
-  // Use measurementFactor.prior() instead of measured()
-  Vector originalError = T::Logmap(measurementFactor.prior().between(linearizationPoint.at<T>(keys[0])));
-  Vector invariantError = linearizationPoint.at<T>(keys[0]).AdjointMap() * originalError;
-  linearizationPoint.update(keys[0], T::Expmap(invariantError) * linearizationPoint.at<T>(keys[0]));
+  // Compute original error and transform it using adjoint
+  T measured = measurementFactor.prior();
+  T actual = x_;
+  Vector originalError = T::Logmap(measured.between(actual));
+  Vector invariantError = x_.AdjointMap() * originalError;
 
-  linearFactorGraph.push_back(measurementFactor.linearize(linearizationPoint));
+  // Update linearization point with invariant error
+  linearizationPoint.update(keys[0], T::Expmap(invariantError) * x_);
+
+  // Linearize with transformed linearization point
+  GaussianFactor::shared_ptr gaussianFactor = 
+      measurementFactor.linearize(linearizationPoint);
+  linearFactorGraph.push_back(gaussianFactor);
+
+  // Solve and update state
   x_ = solve_(linearFactorGraph, linearizationPoint, keys[0], &priorFactor_);
+
   return x_;
 }
 
-} // namespace gtsam
+}
