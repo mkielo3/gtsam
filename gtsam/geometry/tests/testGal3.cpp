@@ -1170,6 +1170,51 @@ TEST(Gal3, ExpLog_NearZero) {
     EXPECT(assert_equal(xi_zero, Gal3::Logmap(Gal3::Expmap(xi_zero)), kTol));
 }
 
+
+/* ************************************************************************* */
+// PreintegratedGalileanMeasurements::ConstantBiasZeroInput test case.
+TEST(Gal3, Expmap_PreintCase) {
+    // Input tangent vector corresponding to one step (dt=0.1) of constant bias
+    // xi = [rho=0, nu=-b_a*dt, theta=-b_w*dt, t=dt]
+    // where b_a = [0.01, -0.02, 0.03], b_w = [0.005, 0.01, -0.002]
+    // This is the order expected: [rho, nu, theta, t]
+    const Vector10 xi_preint = (Vector10() <<
+         0.0,    0.0,    0.0,    // rho
+        -0.001,  0.002, -0.003,  // nu
+        -0.0005, -0.001, 0.0002, // theta
+         0.1                     // t
+    ).finished();
+
+    // Expected ground truth components
+    const Matrix3 expected_R_mat = (Matrix3() <<
+        0.9999994800000559, -0.00019974995702687782, -0.001000049784994639,
+        0.0002002499569731278, 0.9999998550000155,    0.000499899892510757,
+        0.0009999497850053888, -0.0005000998924892569, 0.9999993750000672
+    ).finished();
+    const Point3 expected_r_vec(-4.99566569278304e-05, 9.99716646702065e-05, -0.00015003331896854352);
+    const Velocity3 expected_v_vec(-0.0009986996101397241, 0.001999149920091347, -0.0030009994248925763);
+    const double expected_t_val = 0.1;
+
+    // Construct the expected Gal3 object
+    const Gal3 expected_g(Rot3(expected_R_mat), expected_r_vec, expected_v_vec, expected_t_val);
+
+    // Calculate the result using your C++ implementation
+    Gal3 actual_g = Gal3::Expmap(xi_preint);
+
+    // Compare the results. Keep tolerance tight initially.
+    double comparison_tol = 1e-7;
+    EXPECT(assert_equal(expected_g, actual_g, comparison_tol));
+
+    EXPECT(assert_equal(expected_g.rotation(), actual_g.rotation(), comparison_tol));
+    EXPECT(assert_equal(expected_g.position(), actual_g.position(), comparison_tol)); // Compares 'r' component
+    EXPECT(assert_equal(expected_g.velocity(), actual_g.velocity(), comparison_tol)); // Compares 'v' component
+    EXPECT_DOUBLES_EQUAL(expected_g.time(), actual_g.time(), comparison_tol);
+}
+
+
+/* ************************************************************************* */
+
+
 /* ************************************************************************* */
 int main() {
     TestResult tr;

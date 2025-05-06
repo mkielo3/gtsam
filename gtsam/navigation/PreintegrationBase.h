@@ -143,7 +143,16 @@ class GTSAM_EXPORT PreintegrationBase {
 
   /// Version without derivatives
   virtual void integrateMeasurement(const Vector3& measuredAcc,
-      const Vector3& measuredOmega, const double dt);
+                                    const Vector3& measuredOmega,
+                                    double dt);
+
+  /// Optionally return step Jacobians
+  virtual void integrateMeasurement(const Vector3& measuredAcc,
+                                    const Vector3& measuredOmega,
+                                    double dt,
+                                    OptionalJacobian<9, 9> D_state_state,
+                                    OptionalJacobian<9, 3> D_state_acc,
+                                    OptionalJacobian<9, 3> D_state_omega);
 
   /// Given the estimate of the bias, return a NavState tangent vector
   /// summarizing the preintegrated IMU measurements so far
@@ -167,9 +176,9 @@ class GTSAM_EXPORT PreintegrationBase {
    */
   Vector9 computeErrorAndJacobians(const Pose3& pose_i, const Vector3& vel_i,
       const Pose3& pose_j, const Vector3& vel_j,
-      const imuBias::ConstantBias& bias_i, 
+      const imuBias::ConstantBias& bias_i,
       OptionalJacobian<9, 6> H1 = {}, OptionalJacobian<9, 3> H2 = {},
-      OptionalJacobian<9, 6> H3 = {}, OptionalJacobian<9, 3> H4 = {}, 
+      OptionalJacobian<9, 6> H3 = {}, OptionalJacobian<9, 3> H4 = {},
       OptionalJacobian<9, 6> H5 = {}) const;
 
  private:

@@ -105,12 +105,30 @@ pair<Vector3, Vector3> PreintegrationBase::correctMeasurementsBySensorPose(
 
 //------------------------------------------------------------------------------
 void PreintegrationBase::integrateMeasurement(const Vector3& measuredAcc,
+                                              const Vector3& measuredOmega,
+                                              double dt,
+                                              OptionalJacobian<9, 9> D_state_state,
+                                              OptionalJacobian<9, 3> D_state_acc,
+                                              OptionalJacobian<9, 3> D_state_omega) {
+    // Optional Jacobian shapes reflect the SO3+R3+R3 state space base class.
+    // NOTE(frank): integrateMeasurement always needs to compute the derivatives,
+    // even when not of interest to the caller. Provide scratch space here.
+
+    Matrix9 A;
+    Matrix93 B_acc, B_omega;
+
+    update(measuredAcc, measuredOmega, dt, &A, &B_acc, &B_omega);
+
+    if (D_state_state) *D_state_state = A;
+    if (D_state_acc)   *D_state_acc = B_acc;
+    if (D_state_omega) *D_state_omega = B_omega;
+}
+
+
+//------------------------------------------------------------------------------
+void PreintegrationBase::integrateMeasurement(const Vector3& measuredAcc,
     const Vector3& measuredOmega, double dt) {
-  // NOTE(frank): integrateMeasurement always needs to compute the derivatives,
-  // even when not of interest to the caller. Provide scratch space here.
-  Matrix9 A;
-  Matrix93 B, C;
-  update(measuredAcc, measuredOmega, dt, &A, &B, &C);
+  integrateMeasurement(measuredAcc, measuredOmega, dt, nullptr, nullptr, nullptr);
 }
 
 //------------------------------------------------------------------------------
