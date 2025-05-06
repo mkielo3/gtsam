@@ -138,16 +138,9 @@ TEST(PreintegratedGalileanMeasurements, ZeroInputZeroBias) {
 
     // Check: Covariance should remain zero
     Matrix20 zeroMat = Matrix20::Zero();
-    // *** FIXED: Use public accessor uncertaintyCovariance() ***
     EXPECT(assert_equal(zeroMat, pim.uncertaintyCovariance(), kTol));
 
-    // Bias Jacobian Check:
-    // Removed check `EXPECT(!assert_equal(idMat, biasJac, kApproxTol))`
-    // because the Jacobian propagation relies on Gal3::ExpmapDerivative, which
-    // uses numerical derivatives in the current Gal3 implementation. Numerical
-    // derivatives might return identity for the specific zero-input case,
-    // making the check against non-identity fail or misleading.
-    // Correctness relies on the underlying numerical derivative behavior.
+    // Bias Jacobian Check: (Removed - see previous explanation)
 }
 
 /* ************************************************************************* */
@@ -172,36 +165,27 @@ TEST(PreintegratedGalileanMeasurements, ConstantBiasZeroInput) {
     }
 
     // Check deltaUpsilon against expected values based on first-order integration
-    // Input into Expmap per step is approx zeta_k = [rho=0, nu=-b_a, theta=-b_w, t=1] * dt
     Rot3 expectedRot = Rot3::Expmap(-b_w * total_time); // First order rotation integration
     Vector3 expectedVel = -b_a * total_time;           // First order velocity integration
-    // First order position integration (ignoring rotation effects): Integrate velocity
-    Vector3 expectedPos = -0.5 * b_a * total_time * total_time;
+    Vector3 expectedPos = -0.5 * b_a * total_time * total_time; // First order position integration
 
     Gal3 expectedUpsilon(expectedRot, Point3(expectedPos), expectedVel, total_time);
 
-    // Check the components with appropriate tolerance
-    // Note: These checks now use increased tolerance due to group dynamics vs simplified approximation
     const double kGroupDynamicsTol = 5e-3; // Tolerance for group dynamics approximation
-
     EXPECT(assert_equal(expectedRot, pim.deltaRij(), kApproxTol));
     EXPECT(assert_equal(expectedPos, pim.deltaPij(), kApproxTol));
-    EXPECT(assert_equal(expectedVel, pim.deltaVij(), kGroupDynamicsTol)); // Use increased tolerance
+    EXPECT(assert_equal(expectedVel, pim.deltaVij(), kGroupDynamicsTol));
     DOUBLES_EQUAL(total_time, pim.deltaTij(), kTol);
-    // Full check (redundant but ok)
-    EXPECT(assert_equal(expectedUpsilon, pim.deltaUpsilon(), kGroupDynamicsTol)); // Use increased tolerance
+    EXPECT(assert_equal(expectedUpsilon, pim.deltaUpsilon(), kGroupDynamicsTol));
 
     // Check: Covariance should grow according to bias random walk
-    // *** FIXED: Use public accessor uncertaintyCovariance() ***
     Matrix20 cov = pim.uncertaintyCovariance();
-    // Check symmetry
     Matrix cov_transpose = cov.transpose();
-    EXPECT(assert_equal(cov, cov_transpose, kTol));
-    // Check positive semi-definiteness (eigenvalues >= -tol)
-    Eigen::SelfAdjointEigenSolver<Matrix20> es(cov); // Use Matrix20 explicitly
+    EXPECT(assert_equal(cov, cov_transpose, kTol)); // Symmetry
+    Eigen::SelfAdjointEigenSolver<Matrix20> es(cov);
     Vector eigenvalues = es.eigenvalues();
     for (Eigen::Index i = 0; i < eigenvalues.size(); ++i) {
-        EXPECT(eigenvalues(i) >= -kTol); // Use EXPECT for boolean conditions
+        EXPECT(eigenvalues(i) >= -kTol); // PSD
     }
 
     // Check specific blocks related to bias random walk
@@ -210,6 +194,10 @@ TEST(PreintegratedGalileanMeasurements, ConstantBiasZeroInput) {
 
     Matrix3 bias_a_block = cov.block<3,3>(bias_a_idx, bias_a_idx);
     EXPECT(bias_a_block.trace() > 1e-12); // Expect accel bias variance to grow
+
+    // Rotation variance (indices 6-8) should NOT grow significantly from bias RW alone
+    Matrix3 rot_block = cov.block<3,3>(ups_R_idx, ups_R_idx);
+    EXPECT(rot_block.trace() < 1e-9); // Expect rotation variance to remain small
 
 }
 
@@ -220,7 +208,7 @@ TEST(PreintegratedGalileanMeasurements, ConstantMeasurementZeroBias) {
     // Use parameters with measurement noise, zero bias random walk noise
     auto params = createTestParams(false, true, true, true, true); // Enable measurement noise
     params->accelerometerCovariance = I_3x3 * 1e-4;
-    params->gyroscopeCovariance = I_3x3 * 1e-6;
+    params->gyroscopeCovariance = I_3x3 * 1e-6; // Ensure non-zero gyro noise
 
     PIM pim(params, kZeroBias); // Initialize with zero bias
 
@@ -237,105 +225,139 @@ TEST(PreintegratedGalileanMeasurements, ConstantMeasurementZeroBias) {
     }
 
     // --- Check preintegrated values ---
-    // Expected rotation: Integrate constOmega
     Rot3 expectedRot = Rot3::Rz(constOmega.z() * total_time);
-
-    // Expected velocity/position: Integrate constAcc considering rotation
-    // Using simple first-order approximations (ignoring rotation coupling in Gal3 Expmap)
     Vector3 expectedVel = constAcc * total_time;
     Vector3 expectedPos = 0.5 * constAcc * total_time * total_time;
 
-    // Check components
     EXPECT(assert_equal(expectedRot, pim.deltaRij(), kApproxTol));
-    // NOTE: Position/Velocity checks use approximations that ignore rotation coupling.
-    // They might pass even if Gal3::Expmap has minor errors, but fail if Expmap is significantly wrong.
     EXPECT(assert_equal(expectedPos, pim.deltaPij(), kApproxTol));
     EXPECT(assert_equal(expectedVel, pim.deltaVij(), kApproxTol));
     DOUBLES_EQUAL(total_time, pim.deltaTij(), kTol);
 
     // --- Check Covariance ---
-    // *** FIXED: Use public accessor uncertaintyCovariance() ***
     Matrix20 cov = pim.uncertaintyCovariance();
-    // Check symmetry
     Matrix cov_transpose = cov.transpose();
-    EXPECT(assert_equal(cov, cov_transpose, kTol));
-    // Check positive semi-definiteness (eigenvalues >= -tol)
-    Eigen::SelfAdjointEigenSolver<Matrix20> es(cov); // Use Matrix20 explicitly
+    EXPECT(assert_equal(cov, cov_transpose, kTol)); // Symmetry
+    Eigen::SelfAdjointEigenSolver<Matrix20> es(cov);
     Vector eigenvalues = es.eigenvalues();
     for (Eigen::Index i = 0; i < eigenvalues.size(); ++i) {
-        EXPECT(eigenvalues(i) >= -kTol); // Use EXPECT for boolean conditions
+        EXPECT(eigenvalues(i) >= -kTol); // PSD
     }
 
     // Expect non-zero diagonal entries in the Upsilon blocks (0-9) due to measurement noise
     Matrix ups_block = cov.block<ups_dim, ups_dim>(0, 0);
     EXPECT(ups_block.trace() > 1e-12);
 
+    // *** ADDED CHECK: Verify rotation variance specifically ***
+    Matrix3 rot_block = cov.block<3,3>(ups_R_idx, ups_R_idx);
+    EXPECT(rot_block.trace() > 1e-12); // Expect rotation variance to grow due to gyro noise
+
     // Bias blocks (10-19) should remain zero as bias random walk noise is zero
     Matrix bias_block = cov.block<bias_dim, bias_dim>(ups_dim, ups_dim);
     DOUBLES_EQUAL(0.0, bias_block.norm(), kApproxTol);
 
-    // Bias Jacobian Check:
-    // Removed check `EXPECT(!assert_equal(idMat, biasJac, kApproxTol))`
-    // See comment in ZeroInputZeroBias test regarding numerical derivatives.
+    // Bias Jacobian Check: (Removed - see previous explanation)
 }
 
 /* ************************************************************************* */
 // Test Case 4: Bias Correction Accuracy (First-Order)
 TEST(PreintegratedGalileanMeasurements, BiasCorrectionAccuracy) {
     // This test checks if the first-order bias correction works relative to the
-    // computed (potentially numerical) bias Jacobian. It should still pass if
-    // the mean propagation and bias Jacobian calculation are self-consistent,
-    // even if the Jacobian itself isn't perfectly matching the analytical one.
+    // computed (potentially numerical) bias Jacobian.
 
     auto params = createTestParams(false, true, false, false, false); // Include some noise
 
-    // Sequence of non-zero measurements
     std::vector<Vector3> omegas = {Vector3(0.1, 0.02, -0.03), Vector3(0.11, 0.01, -0.02)};
     std::vector<Vector3> accs = {Vector3(0.1, 0.5, kGravity+0.2), Vector3(0.05, 0.45, kGravity+0.1)};
     std::vector<double> dts = {kDt, kDt};
 
-    // Biases
     Bias bias1(Vector3(0.01, -0.01, 0.02), Vector3(-0.005, 0.002, 0.001));
-    Bias bias2(Vector3(0.012, -0.009, 0.021), Vector3(-0.004, 0.003, 0.0015)); // Slightly different
+    Bias bias2(Vector3(0.012, -0.009, 0.021), Vector3(-0.004, 0.003, 0.0015));
+
+    std::cout << "======= BiasCorrectionAccuracy Test =======" << std::endl;
+    std::cout << "Initial bias1: " << bias1.vector().transpose() << std::endl;
+    std::cout << "Target bias2: " << bias2.vector().transpose() << std::endl;
+    std::cout << "Bias delta: " << (bias2.vector() - bias1.vector()).transpose() << std::endl;
 
     // Integrate with bias1
     PIM pim1(params, bias1);
+    std::cout << "PIM1 initialized with bias1." << std::endl;
+
     for (size_t i = 0; i < dts.size(); ++i) {
+        std::cout << "Integrating step " << i+1 << " for PIM1 with dt=" << dts[i] << std::endl;
+        std::cout << "  acc: " << accs[i].transpose() << ", omega: " << omegas[i].transpose() << std::endl;
         pim1.integrateMeasurement(accs[i], omegas[i], dts[i]);
     }
 
+    std::cout << "PIM1 after integration:" << std::endl;
+    pim1.print("  ");
+    std::cout << "deltaR1: " << Rot3::Logmap(pim1.deltaRij()).transpose() << std::endl;
+    std::cout << "deltaP1: " << pim1.deltaPij().transpose() << std::endl;
+    std::cout << "deltaV1: " << pim1.deltaVij().transpose() << std::endl;
+
     // Integrate with bias2
     PIM pim2(params, bias2);
-     for (size_t i = 0; i < dts.size(); ++i) {
+    std::cout << "PIM2 initialized with bias2." << std::endl;
+
+    for (size_t i = 0; i < dts.size(); ++i) {
+        std::cout << "Integrating step " << i+1 << " for PIM2 with dt=" << dts[i] << std::endl;
+        std::cout << "  acc: " << accs[i].transpose() << ", omega: " << omegas[i].transpose() << std::endl;
         pim2.integrateMeasurement(accs[i], omegas[i], dts[i]);
     }
 
+    std::cout << "PIM2 after integration:" << std::endl;
+    pim2.print("  ");
+    std::cout << "deltaR2: " << Rot3::Logmap(pim2.deltaRij()).transpose() << std::endl;
+    std::cout << "deltaP2: " << pim2.deltaPij().transpose() << std::endl;
+    std::cout << "deltaV2: " << pim2.deltaVij().transpose() << std::endl;
+
     // Calculate the 9D NavState tangent space correction using pim1 and applying bias2
-    // biasCorrectedDelta returns correction in order [Log(R), p, v]
+    std::cout << "Computing biasCorrectedDelta from PIM1 with bias2..." << std::endl;
     Vector9 correction_tangent = pim1.biasCorrectedDelta(bias2);
+    std::cout << "Correction tangent: " << correction_tangent.transpose() << std::endl;
 
     // Get the nominal 9D NavState tangent space delta for pim1 [Log(R), p, v]
     Vector9 delta_pim1_tangent;
     delta_pim1_tangent << Rot3::Logmap(pim1.deltaRij()), pim1.deltaPij(), pim1.deltaVij();
+    std::cout << "delta_pim1_tangent: " << delta_pim1_tangent.transpose() << std::endl;
 
     // Apply correction to pim1's tangent vector
     Vector9 corrected_delta_pim1_tangent = delta_pim1_tangent + correction_tangent;
+    std::cout << "corrected_delta_pim1_tangent: " << corrected_delta_pim1_tangent.transpose() << std::endl;
 
     // Get the nominal 9D NavState tangent space delta for pim2 [Log(R), p, v]
     Vector9 delta_pim2_tangent;
     delta_pim2_tangent << Rot3::Logmap(pim2.deltaRij()), pim2.deltaPij(), pim2.deltaVij();
+    std::cout << "delta_pim2_tangent (target): " << delta_pim2_tangent.transpose() << std::endl;
 
     // Check: Corrected pim1 tangent should approximately equal pim2 tangent
-    // Increased tolerance slightly due to first-order approximation
+    Vector9 error = delta_pim2_tangent - corrected_delta_pim1_tangent;
+    std::cout << "Error vector: " << error.transpose() << std::endl;
+    std::cout << "Error norm: " << error.norm() << std::endl;
+    std::cout << "Error components:" << std::endl;
+    std::cout << "  Rotation error: " << error.segment<3>(0).norm() << std::endl;
+    std::cout << "  Position error: " << error.segment<3>(3).norm() << std::endl;
+    std::cout << "  Velocity error: " << error.segment<3>(6).norm() << std::endl;
+
     EXPECT(assert_equal(delta_pim2_tangent, corrected_delta_pim1_tangent, 5e-3)); // Tolerance for 1st order approx
 
     // Check Jacobian of biasCorrectedDelta numerically
+    std::cout << "Checking Jacobian of biasCorrectedDelta..." << std::endl;
     Matrix96 H_actual;
     pim1.biasCorrectedDelta(bias2, H_actual);
+    std::cout << "H_actual norm: " << H_actual.norm() << std::endl;
+    std::cout << "H_actual first row: " << H_actual.row(0) << std::endl;
 
     std::function<Vector9(const Bias&)> fun =
         [&](const Bias& b) { return pim1.biasCorrectedDelta(b); };
     Matrix96 H_expected = numericalDerivative11<Vector9, Bias>(fun, bias2, 1e-7);
+    std::cout << "H_expected norm: " << H_expected.norm() << std::endl;
+    std::cout << "H_expected first row: " << H_expected.row(0) << std::endl;
+
+    // Check difference between analytical and numerical Jacobians
+    Matrix96 jacobian_diff = H_expected - H_actual;
+    std::cout << "Jacobian difference norm: " << jacobian_diff.norm() << std::endl;
+    std::cout << "Jacobian difference max abs: " << jacobian_diff.cwiseAbs().maxCoeff() << std::endl;
 
     EXPECT(assert_equal(H_expected, H_actual, kApproxTol)); // Tolerance for numerical derivative
 }
@@ -343,6 +365,55 @@ TEST(PreintegratedGalileanMeasurements, BiasCorrectionAccuracy) {
 /* ************************************************************************* */
 // Test Case 5: Covariance Properties (Integrated into other tests)
 // The PSD/Symmetry checks are now performed directly inside Test Cases 2 and 3.
+
+/* ************************************************************************* */
+// Test Case: Gyroscope Noise to Rotation Variance Coupling
+TEST(PreintegratedGalileanMeasurements, GyroNoiseRotationCoupling) {
+    // Use parameters with only gyroscope noise enabled (to isolate the issue)
+    auto params = createTestParams(true, true, true, true, true); // Start with all noise off
+    params->gyroscopeCovariance = I_3x3 * 1e-2; // Significant gyro noise for easier debugging
+
+    PIM pim(params, kZeroBias);
+
+    // Use small but non-zero angular velocity to ensure coupling happens
+    Vector3 smallOmega(0.001, 0.002, 0.003); // Small but non-zero
+
+    // Integrate several steps to accumulate covariance
+    int num_steps = 5;
+
+    std::cout << "Starting covariance test with gyro noise..." << std::endl;
+
+    // Diagnose coupling at each step
+    for (int i = 0; i < num_steps; ++i) {
+        // Before integration
+        Matrix3 pre_rot_cov = pim.uncertaintyCovariance().block<3,3>(ups_R_idx, ups_R_idx);
+        double pre_rot_trace = pre_rot_cov.trace();
+
+        // Integrate with small constant omega
+        pim.integrateMeasurement(kZero, smallOmega, kDt);
+
+        // After integration
+        Matrix3 post_rot_cov = pim.uncertaintyCovariance().block<3,3>(ups_R_idx, ups_R_idx);
+        double post_rot_trace = post_rot_cov.trace();
+
+        // Print diagnostics
+        std::cout << "Step " << i+1 << " rotation covariance:" << std::endl;
+        std::cout << "Pre-integration trace: " << pre_rot_trace << std::endl;
+        std::cout << "Post-integration trace: " << post_rot_trace << std::endl;
+        std::cout << "Difference: " << post_rot_trace - pre_rot_trace << std::endl;
+
+        // At each step, the rotation covariance should grow
+        EXPECT(post_rot_trace > pre_rot_trace);
+    }
+
+    // Final check
+    Matrix3 rot_block = pim.uncertaintyCovariance().block<3,3>(ups_R_idx, ups_R_idx);
+    std::cout << "Final rotation covariance block:" << std::endl << rot_block << std::endl;
+    std::cout << "Final rotation variance trace: " << rot_block.trace() << std::endl;
+
+    // The covariance should have grown due to gyro noise
+    EXPECT(rot_block.trace() > 1e-6);
+}
 
 /* ************************************************************************* */
 int main() {

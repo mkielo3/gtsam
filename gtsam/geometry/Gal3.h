@@ -1,7 +1,6 @@
 /* ----------------------------------------------------------------------------
  * GTSAM Copyright 2010, Georgia Tech Research Corporation,
  * Atlanta, Georgia 30332-0415
-
 * All Rights Reserved
 * Authors: Frank Dellaert, et al. (see THANKS for the full author list)
 * See LICENSE for the license information
@@ -53,6 +52,10 @@ class GTSAM_EXPORT Gal3 : public LieGroup<Gal3, 10> {
 
   /// The dimension of the tangent space
   inline static constexpr size_t dimension = 10;
+
+  /// Small angle threshold for Expmap/Logmap and their derivatives
+  static constexpr double kSmallAngleThreshold = 1e-10;
+
 
   /// @name Constructors
   /// @{

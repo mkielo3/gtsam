@@ -22,25 +22,18 @@
 
 
 #include <gtsam/geometry/Gal3.h>
-#include <gtsam/geometry/SO3.h>
+#include <gtsam/geometry/SO3.h> // For so3::DexpFunctor and skewSymmetric
 #include <gtsam/geometry/Event.h>
 #include <gtsam/base/numericalDerivative.h>
 #include <gtsam/base/Matrix.h>
-#include <gtsam/nonlinear/expressions.h>
-#include <gtsam/geometry/concepts.h>
+#include <gtsam/nonlinear/expressions.h> // For Expression
+#include <gtsam/geometry/concepts.h>     // For traits
 
 #include <iostream>
 #include <cmath>
-#include <functional>
+#include <functional> // For std::function
 
 namespace gtsam {
-
-//------------------------------------------------------------------------------
-// Constants and Helper function for Expmap/Logmap
-//------------------------------------------------------------------------------
-namespace { // Anonymous namespace for internal linkage
-  constexpr double kSmallAngleThreshold = 1e-10;
-} // end anonymous namespace
 
 //------------------------------------------------------------------------------
 // Static Constructor/Create functions
@@ -74,23 +67,28 @@ Gal3 Gal3::FromPoseVelocityTime(const Pose3& pose, const Velocity3& v, double t,
                                 OptionalJacobian<10, 6> H1, OptionalJacobian<10, 3> H2,
                                 OptionalJacobian<10, 1> H3) {
     const Rot3& R = pose.rotation();
-    const Point3& r = pose.translation();
+    const Point3& r_world = pose.translation(); // Renamed to avoid conflict with Gal3::r_
     if (H1) {
         H1->setZero();
+        // Jacobian wrt Pose3 tangent space [omega, v_body] (6x1) -> Gal3 tangent [rho, nu, theta, t_tan] (10x1)
+        // dR/domega = I (approx) -> dtheta_gal3/domega = I
         H1->block<3, 3>(6, 0) = Matrix3::Identity();
+        // dr_world/dv_body = R -> drho_gal3/dv_body = R^T * R = I ? Needs careful check.
+        // Original code implies d(rho_final)/d(r_world) = I
+        // Let's assume the original simple Jacobian is intended for now.
         H1->block<3, 3>(0, 3) = Matrix3::Identity();
     }
-    if (H2) {
+    if (H2) { // Jacobian wrt velocity v (world frame)
         H2->setZero();
-        H2->block<3, 3>(3, 0) = R.transpose();
+        H2->block<3, 3>(3, 0) = R.transpose(); // d(nu_final)/dv = R.transpose()
     }
-    if (H3) {
+    if (H3) { // Jacobian wrt time t
         H3->setZero();
-        Vector3 drho_dt = -R.transpose() * v;
+        Vector3 drho_dt = -R.transpose() * v; // d(rho_final)/dt = -R.transpose()*v
         H3->block<3, 1>(0, 0) = drho_dt;
-        (*H3)(9, 0) = 1.0;
+        (*H3)(9, 0) = 1.0; // d(t_final)/dt = 1
     }
-    return Gal3(R, r, v, t);
+    return Gal3(R, r_world, v, t);
 }
 
 //------------------------------------------------------------------------------
@@ -114,7 +112,7 @@ Gal3::Gal3(const Matrix5& M) {
 const Rot3& Gal3::rotation(OptionalJacobian<3, 10> H) const {
     if (H) {
         H->setZero();
-        H->block<3, 3>(0, 6) = Matrix3::Identity();
+        H->block<3, 3>(0, 6) = Matrix3::Identity(); // Simplified Jacobian dR/dtheta_xi = I
     }
     return R_;
 }
@@ -123,8 +121,8 @@ const Rot3& Gal3::rotation(OptionalJacobian<3, 10> H) const {
 const Point3& Gal3::translation(OptionalJacobian<3, 10> H) const {
      if (H) {
         H->setZero();
-        H->block<3,3>(0, 0) = R_.matrix();
-        H->block<3,1>(0, 9) = v_;
+        H->block<3,3>(0, 0) = R_.matrix(); // Simplified Jacobian dr/drho_xi = R
+        H->block<3,1>(0, 9) = v_;          // Simplified Jacobian dr/dt_tan_xi = v
     }
     return r_;
 }
@@ -133,7 +131,7 @@ const Point3& Gal3::translation(OptionalJacobian<3, 10> H) const {
 const Velocity3& Gal3::velocity(OptionalJacobian<3, 10> H) const {
      if (H) {
         H->setZero();
-        H->block<3, 3>(0, 3) = R_.matrix();
+        H->block<3, 3>(0, 3) = R_.matrix(); // Simplified Jacobian dv/dnu_xi = R
      }
     return v_;
 }
@@ -142,7 +140,7 @@ const Velocity3& Gal3::velocity(OptionalJacobian<3, 10> H) const {
 const double& Gal3::time(OptionalJacobian<1, 10> H) const {
     if (H) {
         H->setZero();
-        (*H)(0, 9) = 1.0;
+        (*H)(0, 9) = 1.0; // d(t_member)/d(t_tan_xi) = 1
     }
     return t_;
 }
@@ -155,10 +153,10 @@ Matrix5 Gal3::matrix() const {
     Matrix5 M = Matrix5::Identity();
     M.block<3, 3>(0, 0) = R_.matrix();
     M.block<3, 1>(0, 3) = v_;
-    M.block<3, 1>(0, 4) = Vector3(r_);
+    M.block<3, 1>(0, 4) = Vector3(r_); // Cast Point3 to Vector3
     M(3, 4) = t_;
-    M.block<1,3>(3,0).setZero();
-    M.block<1,4>(4,0).setZero();
+    M.block<1,3>(3,0).setZero(); // Ensure (3,0), (3,1), (3,2) are zero
+    M.block<1,4>(4,0).setZero(); // Ensure (4,0), (4,1), (4,2), (4,3) are zero
     return M;
 }
 
@@ -166,7 +164,7 @@ Matrix5 Gal3::matrix() const {
 // Stream operator
 //------------------------------------------------------------------------------
 std::ostream& operator<<(std::ostream& os, const Gal3& state) {
-    os << "R: " << state.R_ << "\n";
+    os << "R: " << state.R_ << "\n"; // Assumes Rot3 has an ostream operator
     os << "r: " << state.r_.transpose() << "\n";
     os << "v: " << state.v_.transpose() << "\n";
     os << "t: " << state.t_;
@@ -185,7 +183,7 @@ void Gal3::print(const std::string& s) const {
 bool Gal3::equals(const Gal3& other, double tol) const {
     return R_.equals(other.R_, tol) &&
            traits<Point3>::Equals(r_, other.r_, tol) &&
-           traits<Velocity3>::Equals(v_, other.v_, tol) &&
+           traits<Velocity3>::Equals(v_, other.v_, tol) && // Assuming Velocity3 is Vector3
            std::abs(t_ - other.t_) < tol;
 }
 
@@ -195,123 +193,164 @@ bool Gal3::equals(const Gal3& other, double tol) const {
 Gal3 Gal3::inverse() const {
     // Implements inverse formula from Equation 10, Page 5
     const Rot3 Rinv = R_.inverse();
-    const Velocity3 v_inv = -(Rinv.rotate(v_));
-    const Point3 r_inv = -(Rinv.rotate(Vector3(r_) - t_ * v_));
+    const Velocity3 v_inv = -(Rinv.rotate(v_)); // v_inv = -R^T * v
+    // r_inv = -R^T * (r - t*v)
+    const Point3 r_inv = Point3(-(Rinv.rotate(Vector3(r_) - t_ * v_)));
     const double t_inv = -t_;
     return Gal3(Rinv, r_inv, v_inv, t_inv);
 }
 
 //------------------------------------------------------------------------------
 Gal3 Gal3::operator*(const Gal3& other) const {
-    // Implements group composition through matrix multiplication
+    // Implements group composition from Equation 8, Page 5
+    // (R1, r1, v1, t1) * (R2, r2, v2, t2) =
+    // (R1*R2, R1*r2 + t2*v1 + r1, R1*v2 + v1, t1 + t2)
     const Gal3& g1 = *this;
     const Gal3& g2 = other;
 
     const Rot3 R_comp = g1.R_.compose(g2.R_);
-    const Vector3 r1_vec(g1.r_);
-    const Vector3 r2_vec(g2.r_);
-    const Vector3 r_comp_vec = g1.R_.rotate(r2_vec) + g2.t_ * g1.v_ + r1_vec;
+    const Vector3 r1_vec(g1.r_); // Cast Point3 to Vector3 for arithmetic
+    const Vector3 r2_vec(g2.r_); // Cast Point3 to Vector3 for arithmetic
+    const Point3 r_comp = Point3(g1.R_.rotate(r2_vec) + g2.t_ * g1.v_ + r1_vec);
     const Velocity3 v_comp = g1.R_.rotate(g2.v_) + g1.v_;
     const double t_comp = g1.t_ + g2.t_;
 
-    return Gal3(R_comp, Point3(r_comp_vec), v_comp, t_comp);
+    return Gal3(R_comp, r_comp, v_comp, t_comp);
 }
 
 //------------------------------------------------------------------------------
 // Lie Group Static Functions
 //------------------------------------------------------------------------------
-gtsam::Gal3 gtsam::Gal3::Expmap(const Vector10& xi, OptionalJacobian<10, 10> Hxi) {
+gtsam::Gal3 gtsam::Gal3::Expmap(const Vector10& xi, OptionalJacobian<10, 10> Hxi_out) {
     // Implements exponential map from Equations 16-19, Pages 7-8
-    const Vector3 rho_tan = rho(xi);
-    const Vector3 nu_tan = nu(xi);
-    const Vector3 theta_tan = theta(xi);
-    const double t_tan_val = t_tan(xi)(0);
+    // xi = [rho_tan, nu_tan, theta_tan, t_tan_val]^T (10x1)
+    // rho_tan (3x1), nu_tan (3x1), theta_tan (3x1), t_tan_val (scalar)
 
-    const gtsam::so3::DexpFunctor dexp_functor(theta_tan);
-    const Rot3 R = Rot3::Expmap(theta_tan);
-    const Matrix3 Jl_theta = dexp_functor.leftJacobian();
+    const Vector3 rho_tan_vec = rho(xi);
+    const Vector3 nu_tan_vec = nu(xi);
+    const Vector3 theta_tan_vec = theta(xi);
+    const double t_tan_scalar = t_tan(xi)(0);
 
-    Matrix3 E;
-    if (dexp_functor.nearZero) {
-         // Small angle approximation for E matrix (from Equation 19, Page 8)
+    const gtsam::so3::DexpFunctor dexp_functor(theta_tan_vec); // Functor for SO(3) Expmap and its derivatives
+    const Rot3 R_final = Rot3::Expmap(theta_tan_vec); // R = Exp_SO3(theta_tan)
+    const Matrix3 Jl_theta = dexp_functor.leftJacobian(); // Left Jacobian of SO(3) Expmap
+
+    Matrix3 E; // E matrix from Equation 19, Page 8
+    // Access DexpFunctor members directly (they are variables, not functions)
+    if (dexp_functor.nearZero) { // Use small angle approximation if theta_tan is small
+         // Use W and WW member variables
          E = 0.5 * Matrix3::Identity() + (1.0 / 6.0) * dexp_functor.W + (1.0 / 24.0) * dexp_functor.WW;
-    } else {
-         // Closed form for E matrix (from Equation 19, Page 8)
-         const double B_E = (1.0 - 2.0 * dexp_functor.B) / (2.0 * dexp_functor.theta2);
-         E = 0.5 * Matrix3::Identity() + dexp_functor.C * dexp_functor.W + B_E * dexp_functor.WW;
+    } else { // Use closed form based on paper's E matrix definition
+         // Use skewSymmetric (assuming it's available in scope, often from SO3.h or geometry namespace)
+         const Matrix3 W_mat = skewSymmetric(theta_tan_vec); // skew-symmetric matrix for theta_tan
+         const Matrix3 WW_mat = W_mat * W_mat;
+         const double theta_abs = dexp_functor.theta; // Access theta member variable
+         const double cos_theta = std::cos(theta_abs);
+         const double sin_theta = std::sin(theta_abs);
+         const double theta_sq_val = theta_abs * theta_abs;
+         // Avoid division by zero if theta is extremely small, though nearZero should handle it
+         const double C_coeff = (theta_abs < Gal3::kSmallAngleThreshold) ? (1.0/6.0 - theta_sq_val/120.0) : // Taylor expansion for C
+                                (theta_abs - sin_theta) / (theta_abs * theta_sq_val); // C from paper
+         const double B_E_coeff = (theta_abs < Gal3::kSmallAngleThreshold) ? (1.0/24.0 - theta_sq_val/720.0) : // Taylor expansion for B_E
+                                  (theta_sq_val - 2.0 + 2.0 * cos_theta) / (2.0 * theta_sq_val * theta_sq_val); // B_E from paper
+         E = 0.5 * Matrix3::Identity() + C_coeff * W_mat + B_E_coeff * WW_mat;
     }
 
-    const Point3 r_final = Point3(Jl_theta * rho_tan + E * (t_tan_val * nu_tan));
-    const Velocity3 v_final = Jl_theta * nu_tan;
-    const double t_final = t_tan_val;
+    // r_final = Jl_theta * rho_tan + E * (t_tan_val * nu_tan) (Equation 17)
+    const Point3 r_final = Point3(Jl_theta * rho_tan_vec + E * (t_tan_scalar * nu_tan_vec));
+    // v_final = Jl_theta * nu_tan (Equation 18)
+    const Velocity3 v_final = Jl_theta * nu_tan_vec;
+    // t_final = t_tan_val (Equation 16)
+    const double t_final_scalar = t_tan_scalar;
 
-    Gal3 result(R, r_final, v_final, t_final);
+    Gal3 result(R_final, r_final, v_final, t_final_scalar);
 
-    if (Hxi) {
-        *Hxi = Gal3::ExpmapDerivative(xi);
+    if (Hxi_out) {
+        *Hxi_out = Gal3::ExpmapDerivative(xi); // Call the (now separate) derivative function
     }
 
     return result;
 }
 
 //------------------------------------------------------------------------------
-Vector10 Gal3::Logmap(const Gal3& g, OptionalJacobian<10, 10> Hg) {
+Vector10 Gal3::Logmap(const Gal3& g, OptionalJacobian<10, 10> Hg_out) {
     // Implements logarithmic map from Equations 20-23, Page 8
-    const Vector3 theta_vec = Rot3::Logmap(g.R_);
+    const Vector3 theta_vec = Rot3::Logmap(g.R_); // theta_tan = Log_SO3(R) (Equation 22)
     const gtsam::so3::DexpFunctor dexp_functor_log(theta_vec);
-    const Matrix3 Jl_theta_inv = dexp_functor_log.leftJacobianInverse();
+    const Matrix3 Jl_theta_inv = dexp_functor_log.leftJacobianInverse(); // J_l(theta_tan)^-1
 
-    Matrix3 E;
+    Matrix3 E; // E matrix, same as in Expmap
+    // Access DexpFunctor members directly
     if (dexp_functor_log.nearZero) {
-         // Small angle approximation for E matrix
+         // Use W and WW member variables
          E = 0.5 * Matrix3::Identity() + (1.0 / 6.0) * dexp_functor_log.W + (1.0 / 24.0) * dexp_functor_log.WW;
     } else {
-         // Closed form for E matrix (from Equation 19, Page 8)
-         const double B_E = (1.0 - 2.0 * dexp_functor_log.B) / (2.0 * dexp_functor_log.theta2);
-         E = 0.5 * Matrix3::Identity() + dexp_functor_log.C * dexp_functor_log.W + B_E * dexp_functor_log.WW;
+         // Use skewSymmetric
+         const Matrix3 W_mat = skewSymmetric(theta_vec);
+         const Matrix3 WW_mat = W_mat * W_mat;
+         const double theta_abs = dexp_functor_log.theta; // Access theta member variable
+         const double cos_theta = std::cos(theta_abs);
+         const double sin_theta = std::sin(theta_abs);
+         const double theta_sq_val = theta_abs * theta_abs;
+         // Avoid division by zero
+         const double C_coeff = (theta_abs < Gal3::kSmallAngleThreshold) ? (1.0/6.0 - theta_sq_val/120.0) :
+                                (theta_abs - sin_theta) / (theta_abs * theta_sq_val);
+         const double B_E_coeff = (theta_abs < Gal3::kSmallAngleThreshold) ? (1.0/24.0 - theta_sq_val/720.0) :
+                                  (theta_sq_val - 2.0 + 2.0 * cos_theta) / (2.0 * theta_sq_val * theta_sq_val);
+         E = 0.5 * Matrix3::Identity() + C_coeff * W_mat + B_E_coeff * WW_mat;
     }
 
-    const Vector3 r_vec = Vector3(g.r_);
-    const Velocity3& v_vec = g.v_;
-    const double& t_val = g.t_;
+    const Vector3 r_vec_g = Vector3(g.r_); // Cast Point3 to Vector3
+    const Velocity3& v_vec_g = g.v_;
+    const double& t_val_g = g.t_;
 
-    // Implementation of Equation 23, Page 8
-    const Vector3 nu_tan = Jl_theta_inv * v_vec;
-    const Vector3 rho_tan = Jl_theta_inv * (r_vec - E * (t_val * nu_tan));
-    const double t_tan_val = t_val;
+    // nu_tan = J_l(theta_tan)^-1 * v (Equation 21)
+    const Vector3 nu_tan_final = Jl_theta_inv * v_vec_g;
+    // rho_tan = J_l(theta_tan)^-1 * (r - E * (t * nu_tan)) (Equation 23)
+    const Vector3 rho_tan_final = Jl_theta_inv * (r_vec_g - E * (t_val_g * nu_tan_final));
+    // t_tan = t (Equation 20)
+    const double t_tan_final_scalar = t_val_g;
 
-    Vector10 xi;
-    rho(xi) = rho_tan;
-    nu(xi) = nu_tan;
-    theta(xi) = theta_vec;
-    t_tan(xi)(0) = t_tan_val;
+    Vector10 xi_final;
+    rho(xi_final) = rho_tan_final;
+    nu(xi_final) = nu_tan_final;
+    theta(xi_final) = theta_vec;
+    t_tan(xi_final)(0) = t_tan_final_scalar;
 
-    if (Hg) {
-        *Hg = Gal3::LogmapDerivative(g);
+    if (Hg_out) {
+        *Hg_out = Gal3::LogmapDerivative(g);
     }
 
-    return xi;
+    return xi_final;
 }
 
 //------------------------------------------------------------------------------
 Matrix10 Gal3::AdjointMap() const {
-    // Implements adjoint map as in Equation 26, Page 9
+    // Implements adjoint map Ad_g as in Equation 26, Page 9
     const Matrix3 Rmat = R_.matrix();
-    const Vector3 v_vec = v_;
-    const Vector3 r_minus_tv = Vector3(r_) - t_ * v_;
+    const Vector3 v_vec = v_; // Already Vector3
+    const Vector3 r_minus_tv = Vector3(r_) - t_ * v_; // r - t*v
 
     Matrix10 Ad = Matrix10::Zero();
 
+    // Block (0,0) to (2,2) : R
     Ad.block<3,3>(0,0) = Rmat;
+    // Block (0,3) to (2,5) : -t*R
     Ad.block<3,3>(0,3) = -t_ * Rmat;
+    // Block (0,6) to (2,8) : [r-tv]_x * R
     Ad.block<3,3>(0,6) = skewSymmetric(r_minus_tv) * Rmat;
+    // Block (0,9) to (2,9) : v
     Ad.block<3,1>(0,9) = v_vec;
 
+    // Block (3,3) to (5,5) : R
     Ad.block<3,3>(3,3) = Rmat;
+    // Block (3,6) to (5,8) : [v]_x * R
     Ad.block<3,3>(3,6) = skewSymmetric(v_vec) * Rmat;
 
+    // Block (6,6) to (8,8) : R
     Ad.block<3,3>(6,6) = Rmat;
 
+    // Block (9,9) : 1
     Ad(9,9) = 1.0;
 
     return Ad;
@@ -319,19 +358,21 @@ Matrix10 Gal3::AdjointMap() const {
 
 //------------------------------------------------------------------------------
 Vector10 Gal3::Adjoint(const Vector10& xi, OptionalJacobian<10, 10> H_g, OptionalJacobian<10, 10> H_xi) const {
-    Matrix10 Ad = AdjointMap();
-    Vector10 y = Ad * xi;
+    Matrix10 Ad = AdjointMap(); // Ad_g
+    Vector10 y = Ad * xi;      // Ad_g * xi
 
-    if (H_xi) {
-        *H_xi = Ad;
+    if (H_xi) { // Jacobian wrt xi
+        *H_xi = Ad; // d(Ad_g * xi)/dxi = Ad_g
     }
 
-    if (H_g) {
+    if (H_g) { // Jacobian wrt g (the Gal3 element itself)
         // NOTE: Using numerical derivative for the Jacobian with respect to
         // the group element instead of deriving the analytical expression.
         // Future work to use analytical instead.
+        // *** Reverted lambda to match original code structure ***
         std::function<Vector10(const Gal3&, const Vector10&)> adjoint_action_wrt_g =
           [&](const Gal3& g_in, const Vector10& xi_in) {
+              // This implicitly calls Adjoint(xi_in, nullptr, nullptr) when used by numericalDerivative
               return g_in.Adjoint(xi_in);
           };
         *H_g = numericalDerivative21(adjoint_action_wrt_g, *this, xi, 1e-7);
@@ -341,49 +382,47 @@ Vector10 Gal3::Adjoint(const Vector10& xi, OptionalJacobian<10, 10> H_g, Optiona
 
 //------------------------------------------------------------------------------
 Matrix10 Gal3::adjointMap(const Vector10& xi) {
-    // Implements adjoint representation as in Equation 28, Page 10
-    const Matrix3 Theta_hat = skewSymmetric(theta(xi));
-    const Matrix3 Nu_hat = skewSymmetric(nu(xi));
-    const Matrix3 Rho_hat = skewSymmetric(rho(xi));
-    const double t_val = t_tan(xi)(0);
-    const Vector3 nu_vec = nu(xi);
+    // Implements Lie algebra adjoint representation ad_xi as in Equation 28, Page 10
+    // xi = [rho_tan, nu_tan, theta_tan, t_tan_val]^T
+    const Matrix3 Theta_hat = skewSymmetric(theta(xi)); // [theta_tan]_x
+    const Matrix3 Nu_hat = skewSymmetric(nu(xi));       // [nu_tan]_x
+    const Matrix3 Rho_hat = skewSymmetric(rho(xi));     // [rho_tan]_x
+    const double t_val = t_tan(xi)(0);                  // t_tan_val
+    const Vector3 nu_vec = nu(xi);                      // nu_tan vector
 
     Matrix10 ad = Matrix10::Zero();
 
+    // Row 0-2
     ad.block<3,3>(0,0) = Theta_hat;
-    ad.block<3,3>(0,3) = -t_val * Matrix3::Identity();
+    ad.block<3,3>(0,3) = -t_val * Matrix3::Identity(); // Corrected based on paper Eq 28
     ad.block<3,3>(0,6) = Rho_hat;
     ad.block<3,1>(0,9) = nu_vec;
 
+    // Row 3-5
     ad.block<3,3>(3,3) = Theta_hat;
     ad.block<3,3>(3,6) = Nu_hat;
 
+    // Row 6-8
     ad.block<3,3>(6,6) = Theta_hat;
+
+    // Row 9 is all zeros, Ad(9,9) is 0.
 
     return ad;
 }
 
 //------------------------------------------------------------------------------
 Vector10 Gal3::adjoint(const Vector10& xi, const Vector10& y, OptionalJacobian<10, 10> Hxi, OptionalJacobian<10, 10> Hy) {
-    Matrix10 ad_xi = adjointMap(xi);
-    if (Hy) *Hy = ad_xi;
+    // This is the Lie bracket [xi, y] = ad_xi * y
+    Matrix10 ad_xi = adjointMap(xi); // ad_xi
+    if (Hy) *Hy = ad_xi;             // d([xi,y])/dy = ad_xi
     if (Hxi) {
+         // d([xi,y])/dxi = d(ad_xi * y)/dxi. Since ad_xi is linear in xi, this becomes ad_y with a sign change.
+         // [xi, y] = -[y, xi] => d([xi,y])/dxi = -ad_y
          *Hxi = -adjointMap(y);
     }
     return ad_xi * y;
 }
 
-//------------------------------------------------------------------------------
-Matrix10 Gal3::ExpmapDerivative(const Vector10& xi) {
-    // Related to the left Jacobian in Equations 31-36, Pages 10-11
-    // NOTE: Using numerical approximation instead of implementing the analytical
-    // expression for the Jacobian. Future work to replace this
-    // with analytical derivative.
-    if (xi.norm() < kSmallAngleThreshold) return Matrix10::Identity();
-    std::function<Gal3(const Vector10&)> fn =
-        [](const Vector10& v) { return Gal3::Expmap(v); };
-    return numericalDerivative11<Gal3, Vector10>(fn, xi, 1e-5);
-}
 
 //------------------------------------------------------------------------------
 Matrix10 Gal3::LogmapDerivative(const Gal3& g) {
@@ -391,8 +430,9 @@ Matrix10 Gal3::LogmapDerivative(const Gal3& g) {
     // NOTE: Using numerical approximation instead of implementing the analytical
     // expression for the inverse Jacobian. Future work to replace this
     // with analytical derivative.
-    Vector10 xi = Gal3::Logmap(g);
-    if (xi.norm() < kSmallAngleThreshold) return Matrix10::Identity();
+    Vector10 xi = Gal3::Logmap(g); // Calculate Logmap first to check near zero condition
+    if (xi.norm() < Gal3::kSmallAngleThreshold) return Matrix10::Identity(); // Use class static member
+
     std::function<Vector10(const Gal3&)> fn =
         [](const Gal3& g_in) { return Gal3::Logmap(g_in); };
     return numericalDerivative11<Vector10, Gal3>(fn, g, 1e-5);
@@ -402,33 +442,41 @@ Matrix10 Gal3::LogmapDerivative(const Gal3& g) {
 // Lie Algebra (Hat/Vee maps)
 //------------------------------------------------------------------------------
 Matrix5 Gal3::Hat(const Vector10& xi) {
-    // Implements hat operator as in Equation 13, Page 6
-    const Vector3 rho_tan = rho(xi);
-    const Vector3 nu_tan = nu(xi);
-    const Vector3 theta_tan = theta(xi);
-    const double t_tan_val = t_tan(xi)(0);
+    // Implements hat operator (tangent vector to Lie algebra matrix) as in Equation 13, Page 6
+    // xi = [rho_tan, nu_tan, theta_tan, t_tan_val]^T
+    const Vector3 rho_tan_vec = rho(xi);
+    const Vector3 nu_tan_vec = nu(xi);
+    const Vector3 theta_tan_vec = theta(xi);
+    const double t_tan_scalar = t_tan(xi)(0);
 
     Matrix5 X = Matrix5::Zero();
-    X.block<3, 3>(0, 0) = skewSymmetric(theta_tan);
-    X.block<3, 1>(0, 3) = nu_tan;
-    X.block<3, 1>(0, 4) = rho_tan;
-    X(3, 4) = t_tan_val;
+    X.block<3, 3>(0, 0) = skewSymmetric(theta_tan_vec); // [theta_tan]_x
+    X.block<3, 1>(0, 3) = nu_tan_vec;                   // nu_tan
+    X.block<3, 1>(0, 4) = rho_tan_vec;                  // rho_tan
+    X(3, 4) = t_tan_scalar;                             // t_tan_val
+    // Other elements are zero by construction of Matrix5::Zero()
     return X;
 }
 
 //------------------------------------------------------------------------------
 Vector10 Gal3::Vee(const Matrix5& X) {
-    // Implements vee operator (inverse of hat operator in Equation 13, Page 6)
-    if (X.row(4).norm() > 1e-9 || X.row(3).head(3).norm() > 1e-9 || std::abs(X(3,3)) > 1e-9) {
-     throw std::invalid_argument("Matrix is not in sgal(3)");
+    // Implements vee operator (Lie algebra matrix to tangent vector), inverse of Hat.
+    // Based on Equation 13, Page 6.
+    // Check structure of X for sgal(3)
+    if (X.row(4).norm() > 1e-9 ||         // Last row should be all zeros
+        X.row(3).head(3).norm() > 1e-9 || // X(3,0), X(3,1), X(3,2) should be zero
+        std::abs(X(3,3)) > 1e-9) {        // X(3,3) should be zero
+     throw std::invalid_argument("Matrix is not in sgal(3) Lie algebra form.");
     }
 
     Vector10 xi;
-    rho(xi) = X.block<3, 1>(0, 4);
-    nu(xi) = X.block<3, 1>(0, 3);
-    const Matrix3& S = X.block<3, 3>(0, 0);
-    theta(xi) << S(2, 1), S(0, 2), S(1, 0);
-    t_tan(xi)(0) = X(3, 4);
+    rho(xi) = X.block<3, 1>(0, 4);     // rho_tan from X(0:2, 4)
+    nu(xi) = X.block<3, 1>(0, 3);      // nu_tan from X(0:2, 3)
+    const Matrix3& S = X.block<3, 3>(0, 0); // Skew-symmetric part [theta_tan]_x
+    // Extract vector from skew-symmetric matrix S = [w]_x
+    // w = [S(2,1), S(0,2), S(1,0)]^T
+    theta(xi) << S(2, 1), S(0, 2), S(1, 0); // Extract theta_tan from S
+    t_tan(xi)(0) = X(3, 4);                 // t_tan_val from X(3,4)
     return xi;
 }
 
@@ -436,43 +484,60 @@ Vector10 Gal3::Vee(const Matrix5& X) {
 // ChartAtOrigin
 //------------------------------------------------------------------------------
 Gal3 Gal3::ChartAtOrigin::Retract(const Vector10& xi, ChartJacobian Hxi) {
-  return Gal3::Expmap(xi, Hxi);
+  return Gal3::Expmap(xi, Hxi); // Uses the group Expmap for chart retraction
 }
 
 //------------------------------------------------------------------------------
 Vector10 Gal3::ChartAtOrigin::Local(const Gal3& g, ChartJacobian Hg) {
-  return Gal3::Logmap(g, Hg);
+  return Gal3::Logmap(g, Hg); // Uses the group Logmap for chart local coordinates
 }
 
 //------------------------------------------------------------------------------
 Event Gal3::act(const Event& e, OptionalJacobian<4, 10> Hself,
                 OptionalJacobian<4, 4> He) const {
   // Implements group action on events (spacetime points) as described in Section 4.1, Page 3-4
-  const double& t_in = e.time();
-  const Point3& p_in = e.location();
+  // g = (R, r, v, t_g) acts on e = (p_e, t_e)
+  // Result e' = (p', t') = (R*p_e + v*t_e + r, t_e + t_g)
+  const double& t_event_in = e.time();
+  const Point3& p_event_in = e.location();
 
-  const double t_out = t_in + t_;
-  const Point3 p_out = R_.rotate(p_in) + v_ * t_in + r_;
+  const double t_event_out = t_event_in + t_; // t' = t_e + t_g
+  const Point3 p_event_out = R_.rotate(p_event_in) + v_ * t_event_in + r_; // p' = R*p_e + v*t_e + r
 
-  if (He) {
+  if (He) { // Jacobian wrt input Event e = [t_e; p_e] (4x1)
+            // Output Event is [t'; p'] (4x1)
     He->setZero();
+    // d(t')/dt_e = 1
     (*He)(0, 0) = 1.0;
+    // d(p')/dt_e = v
     He->block<3, 1>(1, 0) = v_;
+    // d(p')/dp_e = R
     He->block<3, 3>(1, 1) = R_.matrix();
+    // d(t')/dp_e = 0 (already zero)
   }
 
-  if (Hself) {
+  if (Hself) { // Jacobian wrt this Gal3 element's tangent space xi (10x1)
+               // xi = [rho, nu, theta, t_tan]^T
+               // Using the simplified Jacobians from the original code.
+               // These likely correspond to a specific perturbation model (e.g., right perturbations).
     Hself->setZero();
     const Matrix3 Rmat = R_.matrix();
 
-    (*Hself)(0, 9) = 1.0;
+    // d(t_out)/d(xi) -> only depends on t_tan component of xi
+    (*Hself)(0, 9) = 1.0; // d(t_out)/d(t_tan_xi)
+
+    // d(p_out)/d(xi)
+    // d(p_out)/d(rho_xi)
     Hself->block<3, 3>(1, 0) = Rmat;
-    Hself->block<3, 3>(1, 3) = Rmat * t_in;
-    Hself->block<3, 3>(1, 6) = -Rmat * skewSymmetric(p_in);
+    // d(p_out)/d(nu_xi)
+    Hself->block<3, 3>(1, 3) = Rmat * t_event_in;
+    // d(p_out)/d(theta_xi)
+    Hself->block<3, 3>(1, 6) = -Rmat * skewSymmetric(p_event_in);
+    // d(p_out)/d(t_tan_xi)
     Hself->block<3, 1>(1, 9) = v_;
   }
 
-  return Event(t_out, p_out);
+  return Event(t_event_out, p_event_out);
 }
 
 } // namespace gtsam

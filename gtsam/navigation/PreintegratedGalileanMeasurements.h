@@ -210,9 +210,6 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
    * @param H4 Optional Jacobian output matrix for error wrt vel_j  (Pointer to 9x3 matrix)
    * @param H5 Optional Jacobian output matrix for error wrt bias_i (Pointer to 9x6 matrix)
    * @return 9-dimensional error vector (rotation, position, velocity)
-   *
-   * **NOTE:** This implementation currently uses **numerical derivatives** for Jacobians H1-H5.
-   * For optimal performance, analytical Jacobians should be derived and implemented.
    */
   Vector9 computeErrorAndJacobians(const Pose3& pose_i, const Vector3& vel_i,
                                    const Pose3& pose_j, const Vector3& vel_j,

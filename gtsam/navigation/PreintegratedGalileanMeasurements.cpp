@@ -181,6 +181,12 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
          return; // Skip integration for non-positive dt
     }
 
+    // DEBUG - Print input values
+    std::cout << "DEBUG [integrateMeasurement]:" << std::endl;
+    std::cout << "  dt: " << dt << std::endl;
+    std::cout << "  measuredAcc: " << measuredAcc.transpose() << std::endl;
+    std::cout << "  measuredOmega: " << measuredOmega.transpose() << std::endl;
+
     auto params = galileanParams();
     Vector3 bodyAcc = measuredAcc;
     Vector3 bodyOmega = measuredOmega;
@@ -193,19 +199,41 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
     w_tilde_k.segment<3>(bias_a_comp_idx) = bodyAcc;
     w_tilde_k(bias_rho_comp_idx) = 1.0;
 
+    // DEBUG - Print transformed quantities
+    std::cout << "  b_hat_k: " << b_hat_k.transpose() << std::endl;
+    std::cout << "  w_tilde_k: " << w_tilde_k.transpose() << std::endl;
+
     Matrix20 Q_d = Matrix20::Zero();
     double inv_dt = 1.0 / dt;
-    Q_d.block<3,3>(bias_w_comp_idx, bias_w_comp_idx) = params->gyroscopeCovariance * inv_dt;
+    Q_d.block<3,3>(ups_R_idx, ups_R_idx) = params->gyroscopeCovariance * inv_dt;
     Q_d.block<3,3>(bias_a_comp_idx, bias_a_comp_idx) = params->accelerometerCovariance * inv_dt;
     Q_d.block<3,3>(bias_w_idx, bias_w_idx) = params->getBiasOmegaCovariance() * dt;
     Q_d.block<3,3>(bias_a_idx, bias_a_idx) = params->getBiasAccCovariance() * dt;
+    std::cout << "  Q_d gyro block (0-2,0-2):\n" << Q_d.block<3,3>(bias_w_comp_idx, bias_w_comp_idx) << std::endl;
+    std::cout << "  Q_d rot indices block (6-8,6-8):\n" << Q_d.block<3,3>(ups_R_idx, ups_R_idx) << std::endl;
+
+    // DEBUG - Print noise matrix Q_d
+    std::cout << "  Q_d diagonal: " << Q_d.diagonal().transpose() << std::endl;
 
     Vector10 w_hat_k = w_tilde_k - b_hat_k;
     Vector10 zeta_k = mapMeasurement10ToTangent10(w_hat_k) * dt;
 
+    // DEBUG - Print intermediate values
+    std::cout << "  w_hat_k: " << w_hat_k.transpose() << std::endl;
+    std::cout << "  zeta_k: " << zeta_k.transpose() << std::endl;
+
     Gal3 Exp_zeta_k = Gal3::Expmap(zeta_k);
+    Gal3 prev_deltaUpsilon = deltaUpsilon_;
     deltaUpsilon_ = Upsilon_hat_k * Exp_zeta_k;
     deltaTij_ += dt;
+
+    // DEBUG - Print Galilean operations
+    std::cout << "  deltaUpsilon_ before update:" << std::endl;
+    prev_deltaUpsilon.print("    ");
+    std::cout << "  Exp_zeta_k:" << std::endl;
+    Exp_zeta_k.print("    ");
+    std::cout << "  deltaUpsilon_ after update:" << std::endl;
+    deltaUpsilon_.print("    ");
 
     Matrix10 Ad_Upsilon_hat_inv_k = Upsilon_hat_k.inverse().AdjointMap();
     Vector10 w_hat_lifted_k = Ad_Upsilon_hat_inv_k * w_hat_k;
@@ -216,52 +244,112 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
     Matrix10 Ad_Exp_w_hat_lifted_dt = Exp_w_hat_lifted_dt.AdjointMap();
     Matrix10 Ad_Upsilon_hat_k = Upsilon_hat_k.AdjointMap();
 
+    // DEBUG - Print adjoint operations
+    std::cout << "  Ad_Upsilon_hat_inv_k norm: " << Ad_Upsilon_hat_inv_k.norm() << std::endl;
+    std::cout << "  JL_exp_arg_lifted norm: " << JL_exp_arg_lifted.norm() << std::endl;
+    std::cout << "  JL_zeta_k norm: " << JL_zeta_k.norm() << std::endl;
+
+    // Check for NaN/Inf in matrices
+    if (!JL_exp_arg_lifted.allFinite()) {
+        std::cerr << "ERROR: NaN/Inf in JL_exp_arg_lifted!" << std::endl;
+    }
+    if (!JL_zeta_k.allFinite()) {
+        std::cerr << "ERROR: NaN/Inf in JL_zeta_k!" << std::endl;
+    }
+
     Matrix20 A_hat_k1 = Matrix20::Identity();
     A_hat_k1.block<10, 10>(0, 10) = JL_exp_arg_lifted * dt;
     A_hat_k1.block<10, 10>(10, 10) = Ad_Exp_w_hat_lifted_dt;
 
     Matrix20 B_hat_k1 = Matrix20::Zero();
     B_hat_k1.block<10, 10>(0, 0) = -Ad_Upsilon_hat_k * JL_zeta_k * dt;
-    B_hat_k1.block<10, 10>(10, 10) = deltaUpsilon_.AdjointMap() * dt; // Note: Paper uses Ad(Upsilon_k+1)
+    B_hat_k1.block<10, 10>(10, 10) = deltaUpsilon_.AdjointMap() * dt;
+    std::cout << "  B_hat_k1 mapping block (6-8,0-2):\n" << B_hat_k1.block<3,3>(ups_R_idx, bias_w_comp_idx) << std::endl;
 
+    // DEBUG - Check matrix norms
+    std::cout << "  A_hat_k1 norm: " << A_hat_k1.norm() << std::endl;
+    std::cout << "  B_hat_k1 norm: " << B_hat_k1.norm() << std::endl;
+
+    Matrix3 rot_cov_before = preintMeasCov_.block<3,3>(ups_R_idx, ups_R_idx);
+
+    Matrix20 prev_preintMeasCov = preintMeasCov_;
     preintMeasCov_ = A_hat_k1 * preintMeasCov_ * A_hat_k1.transpose() + B_hat_k1 * Q_d * B_hat_k1.transpose();
     preintMeasCov_ = (preintMeasCov_ + preintMeasCov_.transpose()) / 2.0; // Ensure symmetry
+
+    // DEBUG - Print covariance changes
+    std::cout << "  preintMeasCov_ trace before: " << prev_preintMeasCov.trace() << std::endl;
+    std::cout << "  preintMeasCov_ trace after: " << preintMeasCov_.trace() << std::endl;
+    Matrix3 rot_cov_after = preintMeasCov_.block<3,3>(ups_R_idx, ups_R_idx);
+    std::cout << "  preintMeasCov_ rot block before:\n" << rot_cov_before << std::endl;
+    std::cout << "  preintMeasCov_ rot block after:\n" << rot_cov_after << std::endl;
+    std::cout << "  rot block trace before: " << rot_cov_before.trace() << std::endl;
+    std::cout << "  rot block trace after: " << rot_cov_after.trace() << std::endl;
+
+    // Check for NaN/Inf in covariance
+    if (!preintMeasCov_.allFinite()) {
+        std::cerr << "ERROR: NaN/Inf detected in preintMeasCov_!" << std::endl;
+        std::cout << "  A_hat_k1 * prev_preintMeasCov * A_hat_k1.T norm: "
+                  << (A_hat_k1 * prev_preintMeasCov * A_hat_k1.transpose()).norm() << std::endl;
+        std::cout << "  B_hat_k1 * Q_d * B_hat_k1.T norm: "
+                  << (B_hat_k1 * Q_d * B_hat_k1.transpose()).norm() << std::endl;
+    }
 
     Matrix20 Phi_b_k1 = Matrix20::Identity();
     Matrix10 J_bias_update = -Ad_Upsilon_hat_k * JL_zeta_k * dt;
     Phi_b_k1.block<10, 10>(0, 10) = J_bias_update;
     preintBiasJacobian_ = Phi_b_k1 * preintBiasJacobian_;
 
-    // Add finiteness checks for critical matrices if debugging
-    #if GTSAM_GALILEAN_PIM_DEBUG_PRINT > 1
-    // ... (Optional verbose logging as before) ...
-    #endif
+    // DEBUG - Print bias Jacobian info
+    std::cout << "  J_bias_update norm: " << J_bias_update.norm() << std::endl;
+    std::cout << "  preintBiasJacobian_ norm: " << preintBiasJacobian_.norm() << std::endl;
+
+    // Check for NaN/Inf in Jacobian
+    if (!preintBiasJacobian_.allFinite()) {
+        std::cerr << "ERROR: NaN/Inf detected in preintBiasJacobian_!" << std::endl;
+    }
+
+    std::cout << "  Integration complete for dt = " << dt << std::endl;
 }
+
 
 
 // biasCorrectedDelta - Eq 39 applied for NavState error
 Vector9 PreintegratedGalileanMeasurements::biasCorrectedDelta(
-    const imuBias::ConstantBias& bias_i, // New 6D bias estimate
+    const imuBias::ConstantBias& bias_i,
     OptionalJacobian<9, 6> H) const {
+
+    // DEBUG - Print input bias vs original bias
+    std::cout << "DEBUG [biasCorrectedDelta]:" << std::endl;
+    std::cout << "  biasHat_: " << biasHat_.vector().transpose() << std::endl;
+    std::cout << "  bias_i: " << bias_i.vector().transpose() << std::endl;
 
     Vector6 delta_bias_6D = bias_i.vector() - biasHat_.vector();
     const Matrix10& J_Upsilon_bias = preintBiasJacobian_.block<10, 10>(0, ups_dim);
-    Vector10 delta_b_10D = mapBias6ToTangent10(delta_bias_6D); // Use helper function
+    Vector10 delta_b_10D = mapBias6ToTangent10(delta_bias_6D);
+
+    // DEBUG - Print mapped bias
+    std::cout << "  delta_bias_6D: " << delta_bias_6D.transpose() << std::endl;
+    std::cout << "  delta_b_10D: " << delta_b_10D.transpose() << std::endl;
+    std::cout << "  J_Upsilon_bias front corner: \n" << J_Upsilon_bias.block<3,3>(0,0) << std::endl;
+
     Vector10 correction_tangent = J_Upsilon_bias * delta_b_10D;
 
-    #if GTSAM_GALILEAN_PIM_DEBUG_PRINT > 0
+    // DEBUG - Check for NaN/Inf
     if (!J_Upsilon_bias.allFinite()) {
-        std::cerr << "PIM_DEBUG (biasCorrectedDelta): NaN/Inf in J_Upsilon_bias!" << std::endl;
+        std::cerr << "ERROR: NaN/Inf in J_Upsilon_bias!" << std::endl;
     }
-     if (!correction_tangent.allFinite()) {
-        std::cerr << "PIM_DEBUG (biasCorrectedDelta): NaN/Inf in correction_tangent!" << std::endl;
+    if (!correction_tangent.allFinite()) {
+        std::cerr << "ERROR: NaN/Inf in correction_tangent!" << std::endl;
     }
-    #endif
 
     Vector9 result;
     result.segment<3>(NAV_R_IDX) = correction_tangent.segment<3>(ups_R_idx);
     result.segment<3>(NAV_P_IDX) = correction_tangent.segment<3>(ups_p_idx);
     result.segment<3>(NAV_V_IDX) = correction_tangent.segment<3>(ups_v_idx);
+
+    // DEBUG - Print output correction
+    std::cout << "  correction_tangent: " << correction_tangent.transpose() << std::endl;
+    std::cout << "  result: " << result.transpose() << std::endl;
 
     if (H) {
         Eigen::Matrix<double, 10, 6> Mapper = Eigen::Matrix<double, 10, 6>::Zero();
@@ -273,16 +361,23 @@ Vector9 PreintegratedGalileanMeasurements::biasCorrectedDelta(
         Selector.block<3,3>(NAV_P_IDX, ups_p_idx) = Matrix3::Identity();
         Selector.block<3,3>(NAV_V_IDX, ups_v_idx) = Matrix3::Identity();
 
-        *H = Selector * J_Upsilon_bias * Mapper; // Analytical Jacobian calculation
+        *H = Selector * J_Upsilon_bias * Mapper;
 
-        #if GTSAM_GALILEAN_PIM_DEBUG_PRINT > 0
+        // DEBUG - Print Jacobian info
+        std::cout << "  Mapper norm: " << Mapper.norm() << std::endl;
+        std::cout << "  Selector norm: " << Selector.norm() << std::endl;
+        std::cout << "  H Jacobian norm: " << H->norm() << std::endl;
+        std::cout << "  H Jacobian first few values: " << H->block<1,6>(0,0) << std::endl;
+
+        // Check for NaN/Inf in H
         if (!H->allFinite()) {
-             std::cerr << "PIM_DEBUG (biasCorrectedDelta): NaN/Inf computed for H!" << std::endl;
+             std::cerr << "ERROR: NaN/Inf computed for H!" << std::endl;
         }
-        #endif
     }
+
     return result;
 }
+
 
 // preintegratedNavStateCovariance
 Matrix9 PreintegratedGalileanMeasurements::preintegratedNavStateCovariance() const {
@@ -305,25 +400,36 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
     const Pose3& pose_i, const Vector3& vel_i,
     const Pose3& pose_j, const Vector3& vel_j,
     const imuBias::ConstantBias& bias_i,
-    boost::optional<Matrix&> H1, boost::optional<Matrix&> H2, // H wrt pose_i (9x6), vel_i (9x3)
-    boost::optional<Matrix&> H3, boost::optional<Matrix&> H4, // H wrt pose_j (9x6), vel_j (9x3)
-    boost::optional<Matrix&> H5) const {                   // H wrt bias i (9x6)
+    boost::optional<Matrix&> H1, boost::optional<Matrix&> H2,
+    boost::optional<Matrix&> H3, boost::optional<Matrix&> H4,
+    boost::optional<Matrix&> H5) const {
+
+    // DEBUG - Print inputs
+    std::cout << "DEBUG [computeErrorAndJacobians]:" << std::endl;
+    std::cout << "  deltaT: " << deltaTij() << std::endl;
+    std::cout << "  pose_i: " << pose_i.translation().transpose() << std::endl;
+    std::cout << "  vel_i: " << vel_i.transpose() << std::endl;
+    std::cout << "  pose_j: " << pose_j.translation().transpose() << std::endl;
+    std::cout << "  vel_j: " << vel_j.transpose() << std::endl;
+    std::cout << "  bias_i: " << bias_i.vector().transpose() << std::endl;
 
     // --- 1. Calculate bias-corrected PIM mean ---
     const Gal3& Upsilon_nominal = deltaUpsilon_;
-    Matrix96 H_biasCorrected_bias; // Jacobian for bias correction part
-    Vector9 delta_navstate = biasCorrectedDelta(bias_i, H_biasCorrected_bias); // Also computes Jacobian if H5 is requested
+    std::cout << "  Upsilon_nominal:" << std::endl;
+    Upsilon_nominal.print("    ");
 
-    // Apply correction using NavState::retract
-    // NavState nominal_navstate(deltaUpsilon_.rotation(), deltaUpsilon_.position(), deltaUpsilon_.velocity());
-    // NavState corrected_navstate = nominal_navstate.retract(delta_navstate);
-    // This is complex, let's stick to the first-order correction applied to the error for now.
-    // The bias correction is applied *after* calculating the nominal error.
+    Matrix96 H_biasCorrected_bias;
+    Vector9 delta_navstate = biasCorrectedDelta(bias_i, H_biasCorrected_bias);
+    std::cout << "  delta_navstate: " << delta_navstate.transpose() << std::endl;
 
     // --- 2. Extract nominal delta measurements ---
     const Rot3& deltaR = Upsilon_nominal.rotation();
     const Vector3 deltaP = Upsilon_nominal.position();
     const Velocity3& deltaV = Upsilon_nominal.velocity();
+
+    std::cout << "  deltaR Logmap: " << Rot3::Logmap(deltaR).transpose() << std::endl;
+    std::cout << "  deltaP: " << deltaP.transpose() << std::endl;
+    std::cout << "  deltaV: " << deltaV.transpose() << std::endl;
 
     // --- 3. Calculate predicted state change from states i and j ---
     auto params = galileanParams();
@@ -334,16 +440,26 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
     const Rot3& R_j = pose_j.rotation();
     const Vector3 p_j = pose_j.translation();
 
+    std::cout << "  gravity: " << n_gravity_w.transpose() << std::endl;
+
     Rot3 deltaR_pred = R_i.between(R_j);
     Vector3 v_err_w = vel_j - vel_i - n_gravity_w * deltaT;
     Vector3 deltaV_pred = R_i.unrotate(v_err_w);
     Vector3 p_err_w = p_j - p_i - vel_i * deltaT - 0.5 * n_gravity_w * deltaT * deltaT;
     Vector3 deltaP_pred = R_i.unrotate(p_err_w);
 
+    std::cout << "  deltaR_pred Logmap: " << Rot3::Logmap(deltaR_pred).transpose() << std::endl;
+    std::cout << "  deltaP_pred: " << deltaP_pred.transpose() << std::endl;
+    std::cout << "  deltaV_pred: " << deltaV_pred.transpose() << std::endl;
+
     // --- 4. Calculate nominal error components (before bias correction) ---
-    Vector3 error_R_nominal = Rot3::Logmap( deltaR_pred * deltaR.inverse() );
+    Vector3 error_R_nominal = Rot3::Logmap(deltaR_pred * deltaR.inverse());
     Vector3 error_p_nominal = deltaP_pred - deltaP;
     Vector3 error_v_nominal = deltaV_pred - deltaV;
+
+    std::cout << "  error_R_nominal: " << error_R_nominal.transpose() << std::endl;
+    std::cout << "  error_p_nominal: " << error_p_nominal.transpose() << std::endl;
+    std::cout << "  error_v_nominal: " << error_v_nominal.transpose() << std::endl;
 
     // --- 5. Assemble 9D nominal error and apply bias correction ---
     Vector9 error9D_nominal;
@@ -355,26 +471,30 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
     // error = nominal_error - biasCorrectedDelta
     Vector9 error9D = error9D_nominal - delta_navstate;
 
+    std::cout << "  error9D_nominal: " << error9D_nominal.transpose() << std::endl;
+    std::cout << "  error9D (after bias corr): " << error9D.transpose() << std::endl;
+    std::cout << "  error9D norm: " << error9D.norm() << std::endl;
+
     // --- 6. Compute Jacobians (Optional) ---
     if (H1 || H2 || H3 || H4 || H5) {
         // Define the error function *without* bias correction for numerical derivatives
         auto compute_nominal_error_for_jacobian =
             [&](const Pose3& p_i_arg, const Vector3& v_i_arg,
                 const Pose3& p_j_arg, const Vector3& v_j_arg,
-                const imuBias::ConstantBias& b_i_arg /* unused */) -> Vector9 { // Bias arg ignored here
+                const imuBias::ConstantBias& b_i_arg /* unused */) -> Vector9 {
 
             // --- Use nominal PIM components ---
-            const Rot3& deltaR_num = deltaR; // Use nominal deltaR captured from outer scope
-            const Vector3 deltaP_num = deltaP; // Use nominal deltaP captured from outer scope
-            const Velocity3& deltaV_num = deltaV; // Use nominal deltaV captured from outer scope
+            const Rot3& deltaR_num = deltaR;
+            const Vector3 deltaP_num = deltaP;
+            const Velocity3& deltaV_num = deltaV;
 
             // --- Recalculate predicted state change components ---
             const Rot3& R_i_num = p_i_arg.rotation();
             const Vector3 p_i_num = p_i_arg.translation();
             const Rot3& R_j_num = p_j_arg.rotation();
             const Vector3 p_j_num = p_j_arg.translation();
-            double deltaT_num = deltaT; // Captured deltaT
-            const Vector3& n_gravity_w_num = n_gravity_w; // Captured n_gravity_w
+            double deltaT_num = deltaT;
+            const Vector3& n_gravity_w_num = n_gravity_w;
 
             Rot3 deltaR_pred_num = R_i_num.between(R_j_num);
             Vector3 v_err_w_num = v_j_arg - v_i_arg - n_gravity_w_num * deltaT_num;
@@ -383,7 +503,7 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
             Vector3 deltaP_pred_num = R_i_num.unrotate(p_err_w_num);
 
             // --- Calculate error components ---
-            Vector3 error_R_num = Rot3::Logmap( deltaR_pred_num * deltaR_num.inverse() );
+            Vector3 error_R_num = Rot3::Logmap(deltaR_pred_num * deltaR_num.inverse());
             Vector3 error_p_num = deltaP_pred_num - deltaP_num;
             Vector3 error_v_num = deltaV_pred_num - deltaV_num;
 
@@ -394,49 +514,57 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
             error9D_num.segment<3>(NAV_V_IDX) = error_v_num;
 
             return error9D_num;
-        }; // end lambda
+        };
 
         // Calculate Jacobians using numerical differentiation for H1, H2, H3, H4
         double numerical_step = 1e-7;
-        if (H1) { // Derivative wrt pose_i (9x6)
+        if (H1) {
+            std::cout << "  Computing H1 (wrt pose_i)..." << std::endl;
             *H1 = numericalDerivative11<Vector9, Pose3>(
                 std::bind(compute_nominal_error_for_jacobian, std::placeholders::_1, vel_i, pose_j, vel_j, bias_i),
                 pose_i, numerical_step);
+            std::cout << "  H1 norm: " << H1->norm() << std::endl;
+            std::cout << "  H1 first few values: " << H1->block<1,6>(0,0) << std::endl;
         }
-         if (H2) { // Derivative wrt vel_i (9x3)
+        if (H2) {
+            std::cout << "  Computing H2 (wrt vel_i)..." << std::endl;
             *H2 = numericalDerivative11<Vector9, Vector3>(
                 std::bind(compute_nominal_error_for_jacobian, pose_i, std::placeholders::_1, pose_j, vel_j, bias_i),
                 vel_i, numerical_step);
+            std::cout << "  H2 norm: " << H2->norm() << std::endl;
+            std::cout << "  H2 first few values: " << H2->block<1,3>(0,0) << std::endl;
         }
-        // Note: Argument indices map H3->pose_j, H4->vel_j, H5->bias_i
-        if (H3) { // Derivative wrt pose_j (9x6)
+        if (H3) {
+            std::cout << "  Computing H3 (wrt pose_j)..." << std::endl;
             *H3 = numericalDerivative11<Vector9, Pose3>(
                 std::bind(compute_nominal_error_for_jacobian, pose_i, vel_i, std::placeholders::_1, vel_j, bias_i),
                 pose_j, numerical_step);
+            std::cout << "  H3 norm: " << H3->norm() << std::endl;
+            std::cout << "  H3 first few values: " << H3->block<1,6>(0,0) << std::endl;
         }
-        if (H4) { // Derivative wrt vel_j (9x3)
+        if (H4) {
+            std::cout << "  Computing H4 (wrt vel_j)..." << std::endl;
             *H4 = numericalDerivative11<Vector9, Vector3>(
                 std::bind(compute_nominal_error_for_jacobian, pose_i, vel_i, pose_j, std::placeholders::_1, bias_i),
                 vel_j, numerical_step);
+            std::cout << "  H4 norm: " << H4->norm() << std::endl;
+            std::cout << "  H4 first few values: " << H4->block<1,3>(0,0) << std::endl;
         }
-        // *** USE ANALYTICAL JACOBIAN FOR H5 ***
-        if (H5) { // Derivative wrt bias_i (9x6)
-            // The Jacobian of the total error w.r.t bias_i is simply the negative
-            // of the Jacobian computed by biasCorrectedDelta.
-            // error = nominal_error - delta_navstate
-            // d(error)/d(bias_i) = 0 - d(delta_navstate)/d(bias_i) = -H_biasCorrected_bias
-            *H5 = -H_biasCorrected_bias; // Use the Jacobian computed during biasCorrectedDelta call
+        if (H5) {
+            std::cout << "  Computing H5 (wrt bias_i)..." << std::endl;
+            *H5 = -H_biasCorrected_bias;
+            std::cout << "  H5 norm: " << H5->norm() << std::endl;
+            std::cout << "  H5 first few values: " << H5->block<1,6>(0,0) << std::endl;
 
-            #if GTSAM_GALILEAN_PIM_DEBUG_PRINT > 0
             if (!H5->allFinite()) {
-                 std::cerr << "PIM_DEBUG (computeError): NaN/Inf computed for H5 (bias Jacobian) using analytical method!" << std::endl;
+                std::cerr << "ERROR: NaN/Inf computed for H5 (bias Jacobian) using analytical method!" << std::endl;
             }
-            #endif
         }
-    } // end if Jacobians requested
+    }
 
     return error9D;
 }
+
 
 // predict - Using standard IMU propagation
 NavState PreintegratedGalileanMeasurements::predict(const NavState& state_i,
