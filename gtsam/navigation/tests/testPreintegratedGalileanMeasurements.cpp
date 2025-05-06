@@ -22,7 +22,6 @@
 #include <CppUnitLite/TestHarness.h> // For TEST, EXPECT, DOUBLES_EQUAL
 #include <Eigen/Eigenvalues> // For checking PSD covariance
 
-#include <iostream>
 #include <vector>
 #include <cmath> // For std::abs
 
@@ -43,7 +42,7 @@ namespace {
     // Dimensions
     const size_t ups_dim = 10;
     const size_t bias_dim = 10;
-    const size_t total_dim = ups_dim + bias_dim; // Should be 20
+    // const size_t total_dim = ups_dim + bias_dim; // Should be 20 // Unused after print removal
 
     // Indices within Upsilon tangent vector (0-9)
     const size_t ups_p_idx = 0; // Start index for position component (rho)
@@ -94,7 +93,7 @@ std::shared_ptr<Params> createTestParams(
     if (zero_integration_noise) {
         p->integrationCovariance.setZero(); // Base class member
     } else {
-         p->integrationCovariance = I_3x3 * 1e-8; // Non-zero example
+        p->integrationCovariance = I_3x3 * 1e-8; // Non-zero example
     }
 
     if (zero_bias_acc_noise) {
@@ -139,8 +138,6 @@ TEST(PreintegratedGalileanMeasurements, ZeroInputZeroBias) {
     // Check: Covariance should remain zero
     Matrix20 zeroMat = Matrix20::Zero();
     EXPECT(assert_equal(zeroMat, pim.uncertaintyCovariance(), kTol));
-
-    // Bias Jacobian Check: (Removed - see previous explanation)
 }
 
 /* ************************************************************************* */
@@ -198,7 +195,6 @@ TEST(PreintegratedGalileanMeasurements, ConstantBiasZeroInput) {
     // Rotation variance (indices 6-8) should NOT grow significantly from bias RW alone
     Matrix3 rot_block = cov.block<3,3>(ups_R_idx, ups_R_idx);
     EXPECT(rot_block.trace() < 1e-9); // Expect rotation variance to remain small
-
 }
 
 
@@ -255,8 +251,6 @@ TEST(PreintegratedGalileanMeasurements, ConstantMeasurementZeroBias) {
     // Bias blocks (10-19) should remain zero as bias random walk noise is zero
     Matrix bias_block = cov.block<bias_dim, bias_dim>(ups_dim, ups_dim);
     DOUBLES_EQUAL(0.0, bias_block.norm(), kApproxTol);
-
-    // Bias Jacobian Check: (Removed - see previous explanation)
 }
 
 /* ************************************************************************* */
@@ -274,91 +268,46 @@ TEST(PreintegratedGalileanMeasurements, BiasCorrectionAccuracy) {
     Bias bias1(Vector3(0.01, -0.01, 0.02), Vector3(-0.005, 0.002, 0.001));
     Bias bias2(Vector3(0.012, -0.009, 0.021), Vector3(-0.004, 0.003, 0.0015));
 
-    std::cout << "======= BiasCorrectionAccuracy Test =======" << std::endl;
-    std::cout << "Initial bias1: " << bias1.vector().transpose() << std::endl;
-    std::cout << "Target bias2: " << bias2.vector().transpose() << std::endl;
-    std::cout << "Bias delta: " << (bias2.vector() - bias1.vector()).transpose() << std::endl;
-
     // Integrate with bias1
     PIM pim1(params, bias1);
-    std::cout << "PIM1 initialized with bias1." << std::endl;
-
     for (size_t i = 0; i < dts.size(); ++i) {
-        std::cout << "Integrating step " << i+1 << " for PIM1 with dt=" << dts[i] << std::endl;
-        std::cout << "  acc: " << accs[i].transpose() << ", omega: " << omegas[i].transpose() << std::endl;
         pim1.integrateMeasurement(accs[i], omegas[i], dts[i]);
     }
 
-    std::cout << "PIM1 after integration:" << std::endl;
-    pim1.print("  ");
-    std::cout << "deltaR1: " << Rot3::Logmap(pim1.deltaRij()).transpose() << std::endl;
-    std::cout << "deltaP1: " << pim1.deltaPij().transpose() << std::endl;
-    std::cout << "deltaV1: " << pim1.deltaVij().transpose() << std::endl;
-
     // Integrate with bias2
     PIM pim2(params, bias2);
-    std::cout << "PIM2 initialized with bias2." << std::endl;
-
     for (size_t i = 0; i < dts.size(); ++i) {
-        std::cout << "Integrating step " << i+1 << " for PIM2 with dt=" << dts[i] << std::endl;
-        std::cout << "  acc: " << accs[i].transpose() << ", omega: " << omegas[i].transpose() << std::endl;
         pim2.integrateMeasurement(accs[i], omegas[i], dts[i]);
     }
 
-    std::cout << "PIM2 after integration:" << std::endl;
-    pim2.print("  ");
-    std::cout << "deltaR2: " << Rot3::Logmap(pim2.deltaRij()).transpose() << std::endl;
-    std::cout << "deltaP2: " << pim2.deltaPij().transpose() << std::endl;
-    std::cout << "deltaV2: " << pim2.deltaVij().transpose() << std::endl;
-
     // Calculate the 9D NavState tangent space correction using pim1 and applying bias2
-    std::cout << "Computing biasCorrectedDelta from PIM1 with bias2..." << std::endl;
     Vector9 correction_tangent = pim1.biasCorrectedDelta(bias2);
-    std::cout << "Correction tangent: " << correction_tangent.transpose() << std::endl;
 
     // Get the nominal 9D NavState tangent space delta for pim1 [Log(R), p, v]
     Vector9 delta_pim1_tangent;
     delta_pim1_tangent << Rot3::Logmap(pim1.deltaRij()), pim1.deltaPij(), pim1.deltaVij();
-    std::cout << "delta_pim1_tangent: " << delta_pim1_tangent.transpose() << std::endl;
 
     // Apply correction to pim1's tangent vector
     Vector9 corrected_delta_pim1_tangent = delta_pim1_tangent + correction_tangent;
-    std::cout << "corrected_delta_pim1_tangent: " << corrected_delta_pim1_tangent.transpose() << std::endl;
 
     // Get the nominal 9D NavState tangent space delta for pim2 [Log(R), p, v]
     Vector9 delta_pim2_tangent;
     delta_pim2_tangent << Rot3::Logmap(pim2.deltaRij()), pim2.deltaPij(), pim2.deltaVij();
-    std::cout << "delta_pim2_tangent (target): " << delta_pim2_tangent.transpose() << std::endl;
 
     // Check: Corrected pim1 tangent should approximately equal pim2 tangent
-    Vector9 error = delta_pim2_tangent - corrected_delta_pim1_tangent;
-    std::cout << "Error vector: " << error.transpose() << std::endl;
-    std::cout << "Error norm: " << error.norm() << std::endl;
-    std::cout << "Error components:" << std::endl;
-    std::cout << "  Rotation error: " << error.segment<3>(0).norm() << std::endl;
-    std::cout << "  Position error: " << error.segment<3>(3).norm() << std::endl;
-    std::cout << "  Velocity error: " << error.segment<3>(6).norm() << std::endl;
-
+    // Vector9 error = delta_pim2_tangent - corrected_delta_pim1_tangent; // Variable 'error' is not used
     EXPECT(assert_equal(delta_pim2_tangent, corrected_delta_pim1_tangent, 5e-3)); // Tolerance for 1st order approx
 
     // Check Jacobian of biasCorrectedDelta numerically
-    std::cout << "Checking Jacobian of biasCorrectedDelta..." << std::endl;
     Matrix96 H_actual;
     pim1.biasCorrectedDelta(bias2, H_actual);
-    std::cout << "H_actual norm: " << H_actual.norm() << std::endl;
-    std::cout << "H_actual first row: " << H_actual.row(0) << std::endl;
 
     std::function<Vector9(const Bias&)> fun =
         [&](const Bias& b) { return pim1.biasCorrectedDelta(b); };
     Matrix96 H_expected = numericalDerivative11<Vector9, Bias>(fun, bias2, 1e-7);
-    std::cout << "H_expected norm: " << H_expected.norm() << std::endl;
-    std::cout << "H_expected first row: " << H_expected.row(0) << std::endl;
 
     // Check difference between analytical and numerical Jacobians
-    Matrix96 jacobian_diff = H_expected - H_actual;
-    std::cout << "Jacobian difference norm: " << jacobian_diff.norm() << std::endl;
-    std::cout << "Jacobian difference max abs: " << jacobian_diff.cwiseAbs().maxCoeff() << std::endl;
-
+    // Matrix96 jacobian_diff = H_expected - H_actual; // Variable 'jacobian_diff' is not used
     EXPECT(assert_equal(H_expected, H_actual, kApproxTol)); // Tolerance for numerical derivative
 }
 
@@ -381,8 +330,6 @@ TEST(PreintegratedGalileanMeasurements, GyroNoiseRotationCoupling) {
     // Integrate several steps to accumulate covariance
     int num_steps = 5;
 
-    std::cout << "Starting covariance test with gyro noise..." << std::endl;
-
     // Diagnose coupling at each step
     for (int i = 0; i < num_steps; ++i) {
         // Before integration
@@ -396,20 +343,12 @@ TEST(PreintegratedGalileanMeasurements, GyroNoiseRotationCoupling) {
         Matrix3 post_rot_cov = pim.uncertaintyCovariance().block<3,3>(ups_R_idx, ups_R_idx);
         double post_rot_trace = post_rot_cov.trace();
 
-        // Print diagnostics
-        std::cout << "Step " << i+1 << " rotation covariance:" << std::endl;
-        std::cout << "Pre-integration trace: " << pre_rot_trace << std::endl;
-        std::cout << "Post-integration trace: " << post_rot_trace << std::endl;
-        std::cout << "Difference: " << post_rot_trace - pre_rot_trace << std::endl;
-
         // At each step, the rotation covariance should grow
         EXPECT(post_rot_trace > pre_rot_trace);
     }
 
     // Final check
     Matrix3 rot_block = pim.uncertaintyCovariance().block<3,3>(ups_R_idx, ups_R_idx);
-    std::cout << "Final rotation covariance block:" << std::endl << rot_block << std::endl;
-    std::cout << "Final rotation variance trace: " << rot_block.trace() << std::endl;
 
     // The covariance should have grown due to gyro noise
     EXPECT(rot_block.trace() > 1e-6);
