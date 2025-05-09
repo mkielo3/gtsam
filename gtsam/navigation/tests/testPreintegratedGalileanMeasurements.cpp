@@ -13,7 +13,7 @@
  */
 
 #include <gtsam/navigation/GalileanImuFactor.h>
-#include <gtsam/navigation/GalileanPreintegrationParams.h>
+#include <gtsam/navigation/PreintegrationGalileanParams.h>
 #include <gtsam/navigation/ImuBias.h>
 #include <gtsam/geometry/Gal3.h>
 #include <gtsam/base/numericalDerivative.h>

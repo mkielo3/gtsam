@@ -17,7 +17,7 @@
 
 // Includes from PreintegratedGalileanMeasurements.h
 #include <gtsam/navigation/PreintegrationBase.h>
-#include <gtsam/navigation/GalileanPreintegrationParams.h> // Assumed to exist
+#include <gtsam/navigation/PreintegrationGalileanParams.h> // Assumed to exist
 #include <gtsam/geometry/Gal3.h>
 #include <gtsam/navigation/NavState.h>
 #include <gtsam/base/OptionalJacobian.h>

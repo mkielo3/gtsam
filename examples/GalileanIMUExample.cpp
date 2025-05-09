@@ -11,7 +11,7 @@
 #include <gtsam/navigation/ImuFactor.h>           // For PreintegratedImuMeasurements
 #include <gtsam/navigation/CombinedImuFactor.h>   // For standard NavState factor
 #include <gtsam/navigation/GalileanImuFactor.h> // For Galilean factor
-#include <gtsam/navigation/GalileanPreintegrationParams.h>
+#include <gtsam/navigation/PreintegrationGalileanParams.h>
 #include <gtsam/base/Vector.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
