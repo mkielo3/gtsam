@@ -16,7 +16,6 @@
 #include <gtsam/navigation/ImuBias.h>
 // Galilean Preintegration
 #include <gtsam/navigation/GalileanImuFactor.h> // Include for completeness
-#include <gtsam/navigation/PreintegratedGalileanMeasurements.h>
 #include <gtsam/navigation/GalileanPreintegrationParams.h>
 // Combined (Baseline) Preintegration
 #include <gtsam/navigation/CombinedImuFactor.h> // For baseline comparison

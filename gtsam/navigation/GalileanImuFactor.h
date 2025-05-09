@@ -7,47 +7,244 @@
  * -------------------------------------------------------------------------- */
 
 /**
- * @file   GalileanImuFactor.h
- * @brief  Factor for relating two states based on preintegrated Galilean IMU measurements.
- * @author Your Name, based on Delama et al., RA-L 2024 and ImuFactor.h
+ * @file CombinedGalileanImuFactor.h
+ * @brief Combined header for Galilean IMU preintegration and factor.
+ * Contains PreintegratedGalileanMeasurements and GalileanImuFactor.
+ * @author Refactored by [Your Tool Name/Your Name]
  */
 
 #pragma once
 
-#include <gtsam/navigation/PreintegratedGalileanMeasurements.h>
+// Includes from PreintegratedGalileanMeasurements.h
+#include <gtsam/navigation/PreintegrationBase.h>
+#include <gtsam/navigation/GalileanPreintegrationParams.h> // Assumed to exist
+#include <gtsam/geometry/Gal3.h>
+#include <gtsam/navigation/NavState.h>
+#include <gtsam/base/OptionalJacobian.h>
+#include <boost/optional.hpp>
+
+// Includes from GalileanImuFactor.h
 #include <gtsam/nonlinear/NonlinearFactor.h>
 #include <gtsam/geometry/Pose3.h>
-#include <gtsam/base/Vector.h>          // Use Vector (specifically Vector3)
+#include <gtsam/base/Vector.h>
 #include <gtsam/navigation/ImuBias.h> // Using ConstantBias
-#include <gtsam/navigation/NavState.h> // Needed for PIM interface types
-#include <gtsam/base/Matrix.h>         // Include for Matrix type
+#include <gtsam/base/Matrix.h>
 
-#include <boost/optional.hpp> // Include for boost::optional used by PIM
+// Define the size of the augmented state tangent space (Upsilon tangent + Bias tangent)
+constexpr size_t GALILEAN_PREINTEGRATION_DIM = 20;
+using Matrix20 = Eigen::Matrix<double, GALILEAN_PREINTEGRATION_DIM, GALILEAN_PREINTEGRATION_DIM>;
+using Vector20 = Eigen::Matrix<double, GALILEAN_PREINTEGRATION_DIM, 1>;
+
+// Define matrix types needed for Jacobians (matching PIM internal calculations)
+using Matrix10 = Eigen::Matrix<double, 10, 10>;
+using Matrix10_6 = Eigen::Matrix<double, 10, 6>;
+using Matrix9_10 = Eigen::Matrix<double, 9, 10>;
+using Matrix96 = Eigen::Matrix<double, 9, 6>; // Jacobian size for bias
+using Matrix99 = Eigen::Matrix<double, 9, 9>; // For NavState Jacobians
+using Matrix93 = Eigen::Matrix<double, 9, 3>; // Vel Jacobian
+using Matrix9 = Eigen::Matrix<double, 9, 9>;  // NavState covariance
 
 namespace gtsam {
+
+/**
+ * PreintegratedGalileanMeasurements integrates IMU measurements on the
+ * manifold M = Gal(3) x R^10 according to Alg. 1 in Delama et al., RA-L 2024.
+ * It stores the mean preintegrated measurement deltaUpsilon (as a Gal3 object)
+ * and the 20x20 covariance matrix preintMeasCov_.
+ *
+ * The GalileanPreintegrationParams should be used.
+ * @author Original author: (From PreintegratedGalileanMeasurements.h)
+ */
+class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase {
+ public:
+  typedef PreintegratedGalileanMeasurements This;
+  typedef PreintegrationBase Base;
+  typedef GalileanPreintegrationParams Params; // Specific parameters for this method
+
+ protected: // Internal state representation
+  /// Preintegrated measurement mean \hat{\Upsilon}_k (stores deltaR, deltaP, deltaV, deltaT)
+  Gal3 deltaUpsilon_;
+
+  /// Preintegrated measurement covariance Sigma_k (20x20 matrix). Eq 35.
+  Matrix20 preintMeasCov_;
+
+  /// Jacobian of preintegrated state w.r.t. initial bias J_xi (20x20 matrix). Eq 38.
+  Matrix20 preintBiasJacobian_;
+
+  /// Counter for integration steps, useful for debugging or specific logic.
+  size_t integration_step_counter_{0};
+
+
+ public:
+  /// Default constructor for serialization.
+  PreintegratedGalileanMeasurements() :
+    deltaUpsilon_(Gal3::Identity()),
+    preintMeasCov_(Matrix20::Zero()),
+    preintBiasJacobian_(Matrix20::Identity()),
+    integration_step_counter_(0) {}
+
+  /// Constructor, initializes with parameters and optional bias.
+  PreintegratedGalileanMeasurements(const std::shared_ptr<Params>& p,
+                                   const Bias& biasHat = Bias());
+
+  /// Virtual destructor.
+  ~PreintegratedGalileanMeasurements() override {}
+
+ public:
+  /// @name Basic utilities
+  /// @{
+
+  /// Re-initialize preintegrated measurements to zero.
+  void resetIntegration() override;
+
+  /// Return shared_ptr to parameters, ensuring correct type.
+  std::shared_ptr<const Params> galileanParams() const;
+
+  /// @}
+
+  /// @name Access instance variables needed by factors or users
+  /// @{
+
+  /// Access the preintegrated measurement mean as a Gal3 object
+  const Gal3& deltaUpsilon() const { return deltaUpsilon_; }
+
+  // --- Provide accessors matching the base class interface ---
+  // --- extracting from deltaUpsilon_                 ---
+  Rot3 deltaRij() const override { return deltaUpsilon_.rotation(); }
+  Vector3 deltaPij() const override { return deltaUpsilon_.position(); }
+  Vector3 deltaVij() const override { return deltaUpsilon_.velocity(); }
+  // deltaTij() is inherited from Base and updated in integrateMeasurement
+
+  /// Return the 9x9 covariance matrix for the NavState portion (R, p, v) error.
+  Matrix9 preintegratedNavStateCovariance() const;
+
+  NavState deltaXij() const override {
+      return NavState(deltaRij(), deltaPij(), deltaVij());
+  }
+
+  /// Return the full 20x20 uncertainty covariance matrix Sigma_k
+  const Matrix20& uncertaintyCovariance() const { return preintMeasCov_; }
+
+  /// Return the full 20x20 bias Jacobian J_xi
+  const Matrix20& biasJacobian() const { return preintBiasJacobian_; }
+  /// @}
+
+
+  /// @name Main functionality
+  /// @{
+
+  /**
+   * Integrate a single IMU measurement using the Galilean propagation (Algorithm 1).
+   * Updates deltaUpsilon_, preintMeasCov_, preintBiasJacobian_, and deltaTij_.
+   * @param measuredAcc Measured acceleration in sensor frame
+   * @param measuredOmega Measured angular velocity in sensor frame
+   * @param dt Time interval for the measurement
+   */
+  void integrateMeasurement(const Vector3& measuredAcc,
+                            const Vector3& measuredOmega, double dt) override;
+
+  void update(const Vector3& measuredAcc, const Vector3& measuredOmega,
+      const double dt, Matrix9* A = nullptr, Matrix93* B = nullptr, Matrix93* C = nullptr) override {
+        if (A || B || C) {
+             throw std::logic_error("PreintegratedGalileanMeasurements::update with Jacobians A, B, C is not supported. Use integrateMeasurement instead.");
+        }
+        integrateMeasurement(measuredAcc, measuredOmega, dt);
+      }
+
+
+  /**
+   * Calculate the change in preintegrated measurements (deltaRij, deltaPij, deltaVij)
+   * given a change in bias from the bias estimate used during integration (`biasHat_`)
+   * to a new bias estimate (`bias_i`). Uses first-order approximation (Eq. 39).
+   * Result is a 9D vector in the NavState tangent space [Log(R), p, v].
+   * @param bias_i New estimate of the bias
+   * @param H Optional Jacobian of the 9D correction vector wrt bias_i (9x6)
+   */
+  Vector9 biasCorrectedDelta(const imuBias::ConstantBias& bias_i,
+                             OptionalJacobian<9, 6> H = {}) const override;
+
+
+  /**
+   * Predicts the state (NavState) at time j based on the state at time i and the
+   * preintegrated measurements. Includes bias correction.
+   * @param state_i NavState at time i
+   * @param bias_i Bias estimate to use for correction
+   * @param H1 Optional Jacobian wrt state_i (9x9)
+   * @param H2 Optional Jacobian wrt bias_i (9x6)
+   */
+  NavState predict(const NavState& state_i, const imuBias::ConstantBias& bias_i,
+                   OptionalJacobian<9, 9> H1 = {},
+                   OptionalJacobian<9, 6> H2 = {}) const;
+
+
+  /**
+   * Compute the 9-DOF error vector between predicted and measured states and
+   * optionally its Jacobians. This is the core computation needed by the GalileanImuFactor.
+   * @param pose_i Pose3 at time i
+   * @param vel_i Velocity at time i (Vector3)
+   * @param pose_j Pose3 at time j
+   * @param vel_j Velocity at time j (Vector3)
+   * @param bias_i Bias estimate at time i (imuBias::ConstantBias)
+   * @param H1 Optional Jacobian output matrix for error wrt pose_i (Pointer to 9x6 matrix)
+   * @param H2 Optional Jacobian output matrix for error wrt vel_i  (Pointer to 9x3 matrix)
+   * @param H3 Optional Jacobian output matrix for error wrt pose_j (Pointer to 9x6 matrix)
+   * @param H4 Optional Jacobian output matrix for error wrt vel_j  (Pointer to 9x3 matrix)
+   * @param H5 Optional Jacobian output matrix for error wrt bias_i (Pointer to 9x6 matrix)
+   * @return 9-dimensional error vector (rotation, position, velocity)
+   */
+  Vector9 computeErrorAndJacobians(const Pose3& pose_i, const Vector3& vel_i,
+                                   const Pose3& pose_j, const Vector3& vel_j,
+                                   const imuBias::ConstantBias& bias_i,
+                                   boost::optional<Matrix&> H1,
+                                   boost::optional<Matrix&> H2,
+                                   boost::optional<Matrix&> H3,
+                                   boost::optional<Matrix&> H4,
+                                   boost::optional<Matrix&> H5) const;
+
+  /// @}
+
+  /// @name Testable
+  /// @{
+  void print(const std::string& s = "PreintegratedGalileanMeasurements:") const override;
+  bool equals(const PreintegratedGalileanMeasurements& other, double tol = 1e-9) const;
+  /// @}
+
+
+private:
+
+  // Internal helper to map 6D bias vector (acc, gyro) to 10D bias tangent vector
+  static Vector10 mapBias6ToTangent10(const Vector6& bias6D);
+
+  // Internal helper to map 10D measurement vector to 10D tangent vector
+  static Vector10 mapMeasurement10ToTangent10(const Vector10& measurement10D);
+
+
+  /** Serialization function */
+#if GTSAM_ENABLE_BOOST_SERIALIZATION
+  friend class boost::serialization::access;
+  template<class ARCHIVE>
+  void serialize(ARCHIVE & ar, const unsigned int /*version*/) {
+    ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(Base);
+    ar & BOOST_SERIALIZATION_NVP(deltaUpsilon_);
+    ar & BOOST_SERIALIZATION_NVP(preintMeasCov_);
+    ar & BOOST_SERIALIZATION_NVP(preintBiasJacobian_);
+    ar & BOOST_SERIALIZATION_NVP(integration_step_counter_);
+  }
+#endif
+
+public:
+ GTSAM_MAKE_ALIGNED_OPERATOR_NEW
+
+}; // PreintegratedGalileanMeasurements
+
 
 /**
  * A factor relating two Pose3 states, two Vector3 velocities (linear velocity),
  * and two ConstantBias states based on preintegrated IMU measurements
  * using the Galilean Preintegration formulation from Delama et al., RA-L 2024.
  *
- * This factor relies on the PreintegratedGalileanMeasurements class, which
- * performs the actual integration according to Algorithm 1 of the paper.
- * The factor's error is a 9D vector representing the mismatch in rotation,
- * position, and velocity between the states, compared against the bias-corrected
- * preintegrated measurement.
- *
- * The noise model for this factor is derived from the 9x9
- * NavState covariance block provided by PreintegratedGalileanMeasurements::preintegratedNavStateCovariance().
- * This 9x9 block implicitly includes the effects of the full 20D Galilean covariance propagation.
- *
- * @param key_pose_i Key for state i Pose3 (X(i))
- * @param key_vel_i Key for state i Velocity (Vector3, V(i))
- * @param key_bias_i Key for state i IMU Bias (B(i))
- * @param key_pose_j Key for state j Pose3 (X(j))
- * @param key_vel_j Key for state j Velocity (Vector3, V(j))
- * @param key_bias_j Key for state j IMU Bias (B(j)) - Note: bias_j is not used in error calculation but included for compatibility/potential extensions.
- * @param pim Preintegrated measurements instance (PreintegratedGalileanMeasurements)
+ * This factor relies on the PreintegratedGalileanMeasurements class.
+ * @author Original author: (From GalileanImuFactor.h)
  */
 class GTSAM_EXPORT GalileanImuFactor : public NoiseModelFactorN<Pose3, Vector3, imuBias::ConstantBias,
                                                                Pose3, Vector3, imuBias::ConstantBias> {
@@ -81,58 +278,41 @@ public:
    */
   GalileanImuFactor(Key key_pose_i, Key key_vel_i, Key key_bias_i,
                     Key key_pose_j, Key key_vel_j, Key key_bias_j,
-                    const PreintegratedGalileanMeasurements& pim); // Implementation in .cpp
+                    const PreintegratedGalileanMeasurements& pim);
 
   /// Default destructor
   ~GalileanImuFactor() override {}
 
   /// @return a deep copy of this factor
-  gtsam::NonlinearFactor::shared_ptr clone() const override; // Implementation in .cpp
+  gtsam::NonlinearFactor::shared_ptr clone() const override;
 
   /// @name Testable
   /// @{
 
   /// Print the factor's details
   void print(const std::string& s = "GalileanImuFactor",
-             const KeyFormatter& keyFormatter = DefaultKeyFormatter) const override; // Implementation in .cpp
+             const KeyFormatter& keyFormatter = DefaultKeyFormatter) const override;
 
   /// Check equality with another factor
-  bool equals(const NonlinearFactor& expected, double tol = 1e-9) const override; // Implementation in .cpp
+  bool equals(const NonlinearFactor& expected, double tol = 1e-9) const override;
   /// @}
 
   /// @name Factor interface
   /// @{
 
   /**
-   * Evaluate the 9-dimensional error between predicted states (based on state i,
-   * bias i, and PIM) and the measured state j.
+   * Evaluate the 9-dimensional error between predicted states and the measured state j.
    * This function calls PIM.computeErrorAndJacobians.
-   * Error = [rotation error(3), position error(3), velocity error(3)]
-   *
-   * @param pose_i State i Pose3
-   * @param vel_i State i Velocity (Vector3)
-   * @param bias_i State i Bias (imuBias::ConstantBias)
-   * @param pose_j State j Pose3
-   * @param vel_j State j Velocity (Vector3)
-   * @param bias_j State j Bias (imuBias::ConstantBias) - Not used in calculation.
-   * @param H1 Optional Jacobian output matrix for error wrt pose_i (9x6)
-   * @param H2 Optional Jacobian output matrix for error wrt vel_i  (9x3)
-   * @param H3 Optional Jacobian output matrix for error wrt bias_i (9x6)
-   * @param H4 Optional Jacobian output matrix for error wrt pose_j (9x6)
-   * @param H5 Optional Jacobian output matrix for error wrt vel_j  (9x3)
-   * @param H6 Optional Jacobian output matrix for error wrt bias_j (9x6) - Always Zero.
-   * @return 9-dimensional error vector (rotation, position, velocity)
-   *
-   * **NOTE:** Jacobians H1-H5 are currently computed numerically within the PIM class.
+   * @param H1-H6 Optional Jacobians. Note H6 (wrt bias_j) is always zero.
    */
    Vector evaluateError(const Pose3& pose_i, const Vector3& vel_i, const imuBias::ConstantBias& bias_i,
                         const Pose3& pose_j, const Vector3& vel_j, const imuBias::ConstantBias& bias_j,
-                        OptionalMatrixType H1 = nullptr, // Jacobian wrt pose_i
-                        OptionalMatrixType H2 = nullptr, // Jacobian wrt vel_i
-                        OptionalMatrixType H3 = nullptr, // Jacobian wrt bias_i
-                        OptionalMatrixType H4 = nullptr, // Jacobian wrt pose_j
-                        OptionalMatrixType H5 = nullptr, // Jacobian wrt vel_j
-                        OptionalMatrixType H6 = nullptr) const override; // Jacobian wrt bias_j
+                        OptionalMatrixType H1 = nullptr,
+                        OptionalMatrixType H2 = nullptr,
+                        OptionalMatrixType H3 = nullptr,
+                        OptionalMatrixType H4 = nullptr,
+                        OptionalMatrixType H5 = nullptr,
+                        OptionalMatrixType H6 = nullptr) const override;
 
 
   /// @}
@@ -149,18 +329,23 @@ private:
   friend class boost::serialization::access;
   template<class ARCHIVE>
   void serialize(ARCHIVE & ar, const unsigned int /*version*/) {
-    // Serialize the base class
     ar & boost::serialization::make_nvp("NoiseModelFactorN",
         boost::serialization::base_object<Base>(*this));
-    // Serialize the PIM object
     ar & BOOST_SERIALIZATION_NVP(_PIM);
   }
 #endif
 
 public:
- // Macro required for classes with fixed-size Eigen matrices passed by value
  GTSAM_MAKE_ALIGNED_OPERATOR_NEW
 
-}; // \class GalileanImuFactor
+}; // class GalileanImuFactor
 
-} /// namespace gtsam
+// Traits specializations
+template <>
+struct traits<PreintegratedGalileanMeasurements> : public Testable<PreintegratedGalileanMeasurements> {};
+
+template <>
+struct traits<GalileanImuFactor> : public Testable<GalileanImuFactor> {};
+
+
+} // namespace gtsam
