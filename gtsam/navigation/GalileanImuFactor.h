@@ -57,9 +57,87 @@ namespace gtsam {
  */
 class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase {
  public:
-  typedef PreintegratedGalileanMeasurements This;
-  typedef PreintegrationBase Base;
-  typedef GalileanPreintegrationParams Params; // Specific parameters for this method
+ typedef PreintegratedGalileanMeasurements This;
+ typedef PreintegrationBase Base;
+ typedef GalileanPreintegrationParams Params; // Specific parameters for this method
+
+ // Add these index constants
+ static constexpr size_t ups_dim = 10;
+ static constexpr size_t bias_dim = 10;
+
+ // Indices within Upsilon tangent vector (0-9) [rho, nu, theta, t]
+ static constexpr size_t ups_p_idx = 0; // rho component (position)
+ static constexpr size_t ups_v_idx = 3; // nu component (velocity)
+ static constexpr size_t ups_R_idx = 6; // theta component (rotation)
+ static constexpr size_t ups_t_idx = 9; // t component (time duration)
+
+ // Indices within Bias tangent vector (0-9) [b_omega, b_acc, b_nu, b_rho]
+ static constexpr size_t bias_w_comp_idx = 0; // b_omega (gyro bias)
+ static constexpr size_t bias_a_comp_idx = 3; // b_acc (accel bias)
+ static constexpr size_t bias_nu_comp_idx = 6; // b_nu (virtual velocity bias)
+ static constexpr size_t bias_rho_comp_idx = 9; // b_rho (virtual time bias)
+
+ // Indices within the full 20D state tangent vector [Upsilon | Bias]
+ static constexpr size_t bias_w_idx = ups_dim + bias_w_comp_idx; // 10
+ static constexpr size_t bias_a_idx = ups_dim + bias_a_comp_idx; // 13
+ static constexpr size_t bias_nu_idx = ups_dim + bias_nu_comp_idx; // 16
+ static constexpr size_t bias_rho_idx = ups_dim + bias_rho_comp_idx; // 19
+
+ // Define indices for accessing the 9D NavState tangent vector
+ static constexpr size_t NAV_R_IDX = 0;
+ static constexpr size_t NAV_P_IDX = 3;
+ static constexpr size_t NAV_V_IDX = 6;
+
+ // Returns the current state as a pair (Upsilon, bias)
+ struct GalileanState {
+   Gal3 Upsilon;
+   Vector10 bias;
+ };
+
+ // Input structure for measurements
+ struct GalileanInput {
+   Vector10 w;     // Combined measurements
+   Vector10 tau;   // Bias random walk component
+
+   GalileanInput(const Vector3& gyro, const Vector3& acc)
+     : w(Vector10::Zero()), tau(Vector10::Zero()) {
+     w.segment<3>(bias_w_comp_idx) = gyro;
+     w.segment<3>(bias_a_comp_idx) = acc;
+     w(bias_rho_comp_idx) = 1.0;
+   }
+ };
+
+ /**
+  * @brief Current state accessor
+  * @return Current state as a GalileanState object
+  */
+ GalileanState xi() const {
+     return {deltaUpsilon_, mapBias6ToTangent10(biasHat_.vector())};
+ }
+
+ /**
+  * @brief Transforms an input by the inverse of a state
+  * @param Upsilon_inv Inverse of an Upsilon matrix
+  * @param u Input to transform
+  * @return Transformed input
+  */
+ GalileanInput psi(const Gal3& Upsilon_inv, const GalileanInput& u) const {
+     GalileanInput result = u;
+     result.w = Upsilon_inv.AdjointMap() * (u.w - mapBias6ToTangent10(biasHat_.vector()));
+     return result;
+ }
+
+ /**
+  * @brief Computes the state update from an input
+  * @param state Current state
+  * @param u Input measurement
+  * @param dt Time step
+  * @return Updated Gal3 measurement
+  */
+ Gal3 Lambda(const GalileanState& state, const GalileanInput& u, double dt) const {
+     Vector10 w_hat = u.w - state.bias;
+     return Gal3::Expmap(mapMeasurement10ToTangent10(w_hat) * dt);
+ }
 
  protected: // Internal state representation
   /// Preintegrated measurement mean \hat{\Upsilon}_k (stores deltaR, deltaP, deltaV, deltaT)
@@ -72,7 +150,6 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
   Matrix20 preintBiasJacobian_;
 
   /// Counter for integration steps, useful for debugging or specific logic.
-  size_t integration_step_counter_{0};
 
 
  public:
@@ -80,8 +157,7 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
   PreintegratedGalileanMeasurements() :
     deltaUpsilon_(Gal3::Identity()),
     preintMeasCov_(Matrix20::Zero()),
-    preintBiasJacobian_(Matrix20::Identity()),
-    integration_step_counter_(0) {}
+    preintBiasJacobian_(Matrix20::Identity()) {}
 
   /// Constructor, initializes with parameters and optional bias.
   PreintegratedGalileanMeasurements(const std::shared_ptr<Params>& p,
@@ -228,7 +304,6 @@ private:
     ar & BOOST_SERIALIZATION_NVP(deltaUpsilon_);
     ar & BOOST_SERIALIZATION_NVP(preintMeasCov_);
     ar & BOOST_SERIALIZATION_NVP(preintBiasJacobian_);
-    ar & BOOST_SERIALIZATION_NVP(integration_step_counter_);
   }
 #endif
 

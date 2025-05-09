@@ -70,84 +70,6 @@ namespace {
 } // anonymous namespace
 
 
-// Helper functions from PreintegratedGalileanMeasurements.cpp
-// These functions are used internally by PreintegratedGalileanMeasurements::integrateMeasurement
-void calculateQ1OmegaR(const Vector3& omega, const Vector3& r, Matrix3& result) {
-    double omega_norm = omega.norm();
-
-    if (omega_norm < 1e-8) {
-        result = 0.5 * skewSymmetric(r);
-        return;
-    }
-    double term1 = (omega_norm - sin(omega_norm)) / pow(omega_norm, 3);
-    double term2 = (omega_norm * omega_norm + 2.0 * cos(omega_norm) - 2.0) / (2.0 * pow(omega_norm, 4));
-    double term3 = (2.0 * omega_norm - 3.0 * sin(omega_norm) + omega_norm * cos(omega_norm)) / (2.0 * pow(omega_norm, 5));
-    Matrix3 omega_hat = skewSymmetric(omega);
-    Matrix3 r_hat = skewSymmetric(r);
-    result = 0.5 * r_hat +
-             term1 * (omega_hat * r_hat + r_hat * omega_hat + omega_hat * r_hat * omega_hat) +
-             term2 * (omega_hat * omega_hat * r_hat + r_hat * omega_hat * omega_hat - 3.0 * omega_hat * r_hat * omega_hat) +
-             term3 * (omega_hat * r_hat * omega_hat * omega_hat + omega_hat * omega_hat * r_hat * omega_hat);
-}
-
-void calculateQ2OmegaV(const Vector3& omega, const Vector3& v, Matrix3& result) {
-    double omega_norm = omega.norm();
-
-    if (omega_norm < 1e-8) {
-        result = (1.0/6.0) * skewSymmetric(v);
-        return;
-    }
-    Matrix3 omega_hat = skewSymmetric(omega);
-    Matrix3 v_hat = skewSymmetric(v);
-    double term1 = (omega_norm * omega_norm + 2.0 * cos(omega_norm) - 2.0) / (2.0 * pow(omega_norm, 4));
-    double term2 = (omega_norm * omega_norm * omega_norm - 6.0 * omega_norm + 6.0 * sin(omega_norm)) / (6.0 * pow(omega_norm, 5));
-    double term3 = (-2.0 * cos(omega_norm) - omega_norm * sin(omega_norm) + 2.0) / pow(omega_norm, 4);
-    double term4 = (omega_norm * omega_norm * omega_norm + 6.0 * omega_norm * cos(omega_norm) + 6.0 * omega_norm - 12.0 * sin(omega_norm)) / (6.0 * pow(omega_norm, 5));
-    double term5 = (-3.0 * omega_norm * cos(omega_norm) - (omega_norm * omega_norm - 3.0) * sin(omega_norm)) / (4.0 * pow(omega_norm, 5));
-    double term6 = (omega_norm * cos(omega_norm) + 2.0 * omega_norm - 3.0 * sin(omega_norm)) / (4.0 * pow(omega_norm, 5));
-    double term7 = ((omega_norm * omega_norm - 8.0) * cos(omega_norm) - 5.0 * omega_norm * sin(omega_norm) + 8.0) / (4.0 * pow(omega_norm, 6));
-    double term8 = (2.0 * omega_norm * omega_norm * omega_norm + 15.0 * omega_norm * cos(omega_norm) + 3.0 * (omega_norm * omega_norm - 5.0) * sin(omega_norm)) / (12.0 * pow(omega_norm, 7));
-    result = (1.0/6.0) * v_hat +
-             term1 * v_hat * omega_hat +
-             term2 * v_hat * omega_hat * omega_hat +
-             term3 * omega_hat * v_hat +
-             term4 * omega_hat * omega_hat * v_hat +
-             term5 * omega_hat * v_hat * omega_hat +
-             term6 * omega_hat * omega_hat * v_hat * omega_hat +
-             term7 * omega_hat * v_hat * omega_hat * omega_hat +
-             term8 * omega_hat * omega_hat * v_hat * omega_hat * omega_hat;
-}
-
-void calculateU1Omega(const Vector3& omega, Matrix3& result) {
-    double omega_norm = omega.norm();
-    if (omega_norm < 1e-8) {
-        result = 0.5 * Matrix3::Identity();
-        return;
-    }
-    double term1 = (sin(omega_norm) - omega_norm * cos(omega_norm)) / pow(omega_norm, 3);
-    double term2 = (omega_norm * omega_norm - 2.0 * omega_norm * sin(omega_norm) - 2.0 * cos(omega_norm) + 2.0) / (2.0 * pow(omega_norm, 4));
-    Matrix3 omega_hat = skewSymmetric(omega);
-    result = 0.5 * Matrix3::Identity() + term1 * omega_hat + term2 * omega_hat * omega_hat;
-}
-
-void calculateQ1OmegaV(const Vector3& omega, const Vector3& z, Matrix3& result) {
-    double omega_norm = omega.norm();
-    if (omega_norm < 1e-8) {
-        result = 0.5 * skewSymmetric(z);
-        return;
-    }
-    double term1 = (omega_norm - sin(omega_norm)) / pow(omega_norm, 3);
-    double term2 = (omega_norm * omega_norm + 2.0 * cos(omega_norm) - 2.0) / (2.0 * pow(omega_norm, 4));
-    double term3 = (2.0 * omega_norm - 3.0 * sin(omega_norm) + omega_norm * cos(omega_norm)) / (2.0 * pow(omega_norm, 5));
-    Matrix3 omega_hat = skewSymmetric(omega);
-    Matrix3 z_hat = skewSymmetric(z);
-    result = 0.5 * z_hat +
-             term1 * (omega_hat * z_hat + z_hat * omega_hat + omega_hat * z_hat * omega_hat) +
-             term2 * (omega_hat * omega_hat * z_hat + z_hat * omega_hat * omega_hat - 3.0 * omega_hat * z_hat * omega_hat) +
-             term3 * (omega_hat * z_hat * omega_hat * omega_hat + omega_hat * omega_hat * z_hat * omega_hat);
-}
-
-
 // --- Implementations for PreintegratedGalileanMeasurements ---
 
 // Constructor
@@ -156,8 +78,7 @@ PreintegratedGalileanMeasurements::PreintegratedGalileanMeasurements(
     : Base(p, biasHat),
       deltaUpsilon_(Gal3::Identity()),
       preintMeasCov_(Matrix20::Zero()),
-      preintBiasJacobian_(Matrix20::Identity()),
-      integration_step_counter_(0)
+      preintBiasJacobian_(Matrix20::Identity())
       {
     if (!std::dynamic_pointer_cast<Params>(p_)) {
         throw std::runtime_error("PreintegratedGalileanMeasurements requires a valid shared_ptr to GalileanPreintegrationParams.");
@@ -171,7 +92,6 @@ void PreintegratedGalileanMeasurements::resetIntegration() {
   deltaTij_ = 0.0;
   preintMeasCov_.setZero();
   preintBiasJacobian_.setIdentity();
-  integration_step_counter_ = 0;
 
   if (p_) {
     auto galileanParamsPtr = std::dynamic_pointer_cast<const Params>(p_);
@@ -219,11 +139,14 @@ bool PreintegratedGalileanMeasurements::equals(
   }
   return deltaUpsilon_.equals(other.deltaUpsilon_, tol)
       && equal_with_abs_tol(preintMeasCov_, other.preintMeasCov_, tol)
-      && equal_with_abs_tol(preintBiasJacobian_, other.preintBiasJacobian_, tol)
-      && integration_step_counter_ == other.integration_step_counter_;
-}
+      && equal_with_abs_tol(preintBiasJacobian_, other.preintBiasJacobian_, tol);
+      }
 
 Vector10 PreintegratedGalileanMeasurements::mapBias6ToTangent10(const Vector6& bias6D) {
+    // Gyroscope bias (3D, positions 0-2): bias_w_comp_idx
+    // Accelerometer bias (3D, positions 3-5): bias_a_comp_idx
+    // Virtual velocity bias (3D, positions 6-8): bias_nu_comp_idx
+    // Virtual time bias (1D, position 9): bias_rho_comp_idx
     Vector10 result = Vector10::Zero();
     result.segment<3>(bias_w_comp_idx) = bias6D.tail<3>();
     result.segment<3>(bias_a_comp_idx) = bias6D.head<3>();
@@ -241,94 +164,90 @@ Vector10 PreintegratedGalileanMeasurements::mapMeasurement10ToTangent10(const Ve
 void PreintegratedGalileanMeasurements::integrateMeasurement(
     const Vector3& measuredAcc, const Vector3& measuredOmega, double dt) {
 
-    if (dt <= 0) {
-        return;
-    }
-    integration_step_counter_++;
+    if (dt <= 0) return;
 
     auto params = galileanParams();
-    // Per original PreintegratedGalileanMeasurements.cpp, measuredAcc and measuredOmega are used directly as bodyAcc/bodyOmega.
-    // No sensor to body transformation block was present here in the original.
-    Vector3 bodyAcc = measuredAcc;
-    Vector3 bodyOmega = measuredOmega;
 
-    const Gal3& Upsilon_hat_k = deltaUpsilon_;
-    Vector10 b_hat_k = mapBias6ToTangent10(biasHat_.vector());
+    // Create input from measurements
+    GalileanInput u(measuredOmega, measuredAcc);
 
-    Vector10 w_tilde_k = Vector10::Zero();
-    w_tilde_k.segment<3>(bias_w_comp_idx) = bodyOmega;
-    w_tilde_k.segment<3>(bias_a_comp_idx) = bodyAcc;
-    w_tilde_k(bias_rho_comp_idx) = 1.0;
+    // Get current state
+    auto state = xi();
 
-    Matrix20 Q_d = Matrix20::Zero();
-    Q_d.block<3,3>(ups_R_idx, ups_R_idx) = params->gyroscopeCovariance * dt;
-    Q_d.block<3,3>(ups_v_idx, ups_v_idx) = params->accelerometerCovariance * dt;
-    Q_d.block<3,3>(bias_w_idx, bias_w_idx) = params->getBiasOmegaCovariance() * dt;
-    Q_d.block<3,3>(bias_a_idx, bias_a_idx) = params->getBiasAccCovariance() * dt;
+    // Compute K matrix
+    Matrix10 K = state.Upsilon.AdjointMap() *
+                Gal3::ExpmapDerivative(mapMeasurement10ToTangent10(u.w - state.bias) * dt) * dt;
 
-    Vector10 w_hat_k = w_tilde_k - b_hat_k;
-    Vector10 zeta_k = mapMeasurement10ToTangent10(w_hat_k) * dt;
+    // Transform input
+    auto u0 = psi(state.Upsilon.inverse(), u);
 
-    Gal3 Exp_zeta_k = Gal3::Expmap(zeta_k);
-    deltaUpsilon_ = Upsilon_hat_k * Exp_zeta_k;
+    // Update mean (deltaUpsilon_)
+    Gal3 Lambda_update = Lambda(state, u, dt);
+    deltaUpsilon_ = deltaUpsilon_ * Lambda_update;
     deltaTij_ += dt;
 
-    bool is_zero_motion = (bodyAcc.norm() < 1e-10 && bodyOmega.norm() < 1e-10);
+    // Propagate covariance
+    Matrix20 A = Matrix20::Identity();
+    A.block<10, 10>(0, ups_dim) = Gal3::ExpmapDerivative(
+        mapMeasurement10ToTangent10(u0.w) * dt) * dt;
+    A.block<10, 10>(ups_dim, ups_dim) = Gal3::Expmap(
+        mapMeasurement10ToTangent10(u0.w) * dt).AdjointMap();
 
-    Matrix10 Ad_Upsilon_hat_k = Upsilon_hat_k.AdjointMap();
-    Matrix10 Ad_Upsilon_hat_inv_k = Upsilon_hat_k.inverse().AdjointMap();
-    Vector10 w_bar_k_dt_tangent = mapMeasurement10ToTangent10(Ad_Upsilon_hat_inv_k * w_hat_k) * dt;
-    Matrix10 JL_w_bar_k_dt = Gal3::ExpmapDerivative(w_bar_k_dt_tangent);
-    Matrix10 JL_zeta_k = Gal3::ExpmapDerivative(zeta_k);
-    Gal3 Exp_w_bar_k_dt = Gal3::Expmap(w_bar_k_dt_tangent);
-    Matrix10 Ad_Exp_w_bar_k_dt = Exp_w_bar_k_dt.AdjointMap();
+    Matrix20 B = Matrix20::Zero();
+    B.block<10, 10>(0, 0) = -K;
+    B.block<10, 10>(ups_dim, ups_dim) = state.Upsilon.AdjointMap() * dt;
 
-    Matrix20 A_hat_k1 = Matrix20::Identity();
-    if (!is_zero_motion) {
-        A_hat_k1.block<10, 10>(0, ups_dim) = JL_w_bar_k_dt * dt;
-    }
-    A_hat_k1.block<10,10>(ups_dim, ups_dim) = Ad_Exp_w_bar_k_dt;
+    // Create noise covariance
+    Matrix20 Q_d = Matrix20::Zero();
+    // bc σ²_discrete = σ²_continuous / dt -- gtsam assumes continuous time
+    Q_d.block<3,3>(ups_R_idx, ups_R_idx) = params->gyroscopeCovariance / dt;
+    Q_d.block<3,3>(ups_v_idx, ups_v_idx) = params->accelerometerCovariance / dt;
+    Q_d.block<3,3>(bias_w_idx, bias_w_idx) = params->getBiasOmegaCovariance() / dt;
+    Q_d.block<3,3>(bias_a_idx, bias_a_idx) = params->getBiasAccCovariance() / dt;
 
-    Matrix20 B_hat_k1 = Matrix20::Zero();
-    B_hat_k1.block<10, 10>(0, 0) = -Ad_Upsilon_hat_k * JL_zeta_k * dt;
-    B_hat_k1.block<10, 10>(ups_dim, ups_dim) = deltaUpsilon_.AdjointMap() * dt;
+    // Update covariance
+    preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d * B.transpose();
 
-    preintMeasCov_ = A_hat_k1 * preintMeasCov_ * A_hat_k1.transpose() + B_hat_k1 * Q_d * B_hat_k1.transpose();
-    preintMeasCov_ = (preintMeasCov_ + preintMeasCov_.transpose()) / 2.0;
-    preintBiasJacobian_ = A_hat_k1 * preintBiasJacobian_;
+    // Update Jacobian with respect to bias
+    Matrix20 Phi_b = Matrix20::Identity();
+    Phi_b.block<10,10>(0, ups_dim) = -(Matrix10::Identity() - K);                       //   -K        term
+    Phi_b.block<10,10>(0, 0) = (Matrix10::Identity() - K) *
+        Gal3::ExpmapDerivative(mapMeasurement10ToTangent10(u0.w) * dt) * dt;
+
+    preintBiasJacobian_ = Phi_b * preintBiasJacobian_;
 }
-
 
 Vector9 PreintegratedGalileanMeasurements::biasCorrectedDelta(
     const imuBias::ConstantBias& bias_i,
     OptionalJacobian<9, 6> H) const {
 
-    Vector6 delta_bias_6D = bias_i.vector() - biasHat_.vector();
-    Vector10 delta_b_10D = mapBias6ToTangent10(delta_bias_6D);
-    Vector10 bias_induced_correction_tangent = preintBiasJacobian_.block<10,10>(0, ups_dim) * delta_b_10D;
-    Gal3 corrected_deltaUpsilon = Gal3::Expmap(bias_induced_correction_tangent) * deltaUpsilon_;
+    // Get bias difference in 10D tangent space
+    Vector10 delta_b = mapBias6ToTangent10(bias_i.vector() - biasHat_.vector());
 
-    Vector9 result_navstate_correction_9D;
-    Rot3 orig_R = deltaUpsilon_.rotation();
-    Vector3 orig_P = deltaUpsilon_.position();
-    Vector3 orig_V = deltaUpsilon_.velocity();
-    Rot3 corr_R = corrected_deltaUpsilon.rotation();
-    Vector3 corr_P = corrected_deltaUpsilon.position();
-    Vector3 corr_V = corrected_deltaUpsilon.velocity();
+    // Compute corrected measurement (uses bias Jacobian)
+    Gal3 corrected = Gal3::Expmap(preintBiasJacobian_.block<10,10>(0, ups_dim) * delta_b) * deltaUpsilon_;
 
-    result_navstate_correction_9D.segment<3>(NAV_R_IDX) = Rot3::Logmap(corr_R * orig_R.inverse());
-    result_navstate_correction_9D.segment<3>(NAV_P_IDX) = corr_P - orig_P;
-    result_navstate_correction_9D.segment<3>(NAV_V_IDX) = corr_V - orig_V;
+    // Initialize result vector for NavState tangent space
+    Vector9 result;
 
+    // Compute delta in rotation (using Lie algebra)
+    result.segment<3>(NAV_R_IDX) = Rot3::Logmap(corrected.rotation() * deltaUpsilon_.rotation().inverse());
+
+    // Compute delta in position and velocity (direct subtraction)
+    result.segment<3>(NAV_P_IDX) = corrected.position() - deltaUpsilon_.position();
+    result.segment<3>(NAV_V_IDX) = corrected.velocity() - deltaUpsilon_.velocity();
+
+    // Calculate Jacobian if requested
     if (H) {
-        std::function<Vector9(const imuBias::ConstantBias&)> fun =
-            [this](const imuBias::ConstantBias& b) {
+        auto compute_delta = [this](const imuBias::ConstantBias& b) {
             return this->biasCorrectedDelta(b, {});
         };
-        *H = numericalDerivative11<Vector9, imuBias::ConstantBias, 6>(fun, bias_i, 1e-7);
+        *H = numericalDerivative11<Vector9, imuBias::ConstantBias, 6>(compute_delta, bias_i);
     }
-    return result_navstate_correction_9D;
+
+    return result;
 }
+
 
 Matrix9 PreintegratedGalileanMeasurements::preintegratedNavStateCovariance() const {
   static const Matrix9_10 S = [] {
@@ -352,105 +271,137 @@ Vector9 PreintegratedGalileanMeasurements::computeErrorAndJacobians(
     const Pose3& pose_i, const Vector3& vel_i,
     const Pose3& pose_j, const Vector3& vel_j,
     const imuBias::ConstantBias& bias_i,
-    boost::optional<Matrix&> H_pose_i, boost::optional<Matrix&> H_vel_i,
-    boost::optional<Matrix&> H_pose_j, boost::optional<Matrix&> H_vel_j,
-    boost::optional<Matrix&> H_bias_i) const {
+    boost::optional<Matrix&> H1, boost::optional<Matrix&> H2,
+    boost::optional<Matrix&> H3, boost::optional<Matrix&> H4,
+    boost::optional<Matrix&> H5) const {
 
-    Matrix96 H_pim_correction_wrt_bias_i_calc;
-    Vector9 pim_navstate_correction = biasCorrectedDelta(bias_i, H_pim_correction_wrt_bias_i_calc);
+    // 1. Get bias correction delta in tangent space
+    Vector6 delta_bias_6D = bias_i.vector() - biasHat_.vector();
+    Vector10 delta_b_10D = mapBias6ToTangent10(delta_bias_6D);
 
-    const Rot3& deltaR_nominal = deltaUpsilon_.rotation();
-    const Vector3 deltaP_nominal = deltaUpsilon_.position();
-    const Vector3& deltaV_nominal = deltaUpsilon_.velocity();
+    // 2. Apply bias correction to preintegrated measurements
+    Gal3 bias_correction = Gal3::Expmap(preintBiasJacobian_.block<10,10>(0, ups_dim) * delta_b_10D);
+    Gal3 corrected_deltaUpsilon = bias_correction * deltaUpsilon_;
 
-    Rot3 deltaR_corrected = deltaR_nominal * Rot3::Expmap(pim_navstate_correction.segment<3>(NAV_R_IDX));
-    Vector3 deltaP_corrected = deltaP_nominal + pim_navstate_correction.segment<3>(NAV_P_IDX);
-    Vector3 deltaV_corrected = deltaV_nominal + pim_navstate_correction.segment<3>(NAV_V_IDX);
+    // 3. Extract components from corrected measurements
+    const Rot3& deltaR_corrected = corrected_deltaUpsilon.rotation();
+    const Vector3 deltaP_corrected = corrected_deltaUpsilon.position();
+    const Vector3& deltaV_corrected = corrected_deltaUpsilon.velocity();
 
+    // 4. Get navigation parameters
     auto params = galileanParams();
-    const Vector3& n_gravity_w = params->n_gravity;
+    const Vector3& gravity = params->n_gravity;
     double deltaT = deltaTij();
+
+    // 5. Compute predicted deltas based on the poses and velocities
     const Rot3& R_i = pose_i.rotation();
-    const Vector3 p_i_val = pose_i.translation(); // Use a different name to avoid conflict with p_i in lambda
+    const Vector3 p_i = pose_i.translation();
     const Rot3& R_j = pose_j.rotation();
-    const Vector3 p_j_val = pose_j.translation(); // Use a different name
+    const Vector3 p_j = pose_j.translation();
 
+    // Compute predicted relative rotation
     Rot3 deltaR_pred = R_i.between(R_j);
-    Vector3 v_err_w = vel_j - vel_i - n_gravity_w * deltaT;
-    Vector3 deltaV_pred = R_i.unrotate(v_err_w);
-    Vector3 p_err_w = p_j_val - p_i_val - vel_i * deltaT - 0.5 * n_gravity_w * deltaT * deltaT;
-    Vector3 deltaP_pred = R_i.unrotate(p_err_w);
 
+    // Compute predicted relative velocity (in body frame)
+    Vector3 v_err_world = vel_j - vel_i - gravity * deltaT;
+    Vector3 deltaV_pred = R_i.unrotate(v_err_world);
+
+    // Compute predicted relative position (in body frame)
+    Vector3 p_err_world = p_j - p_i - vel_i * deltaT - 0.5 * gravity * deltaT * deltaT;
+    Vector3 deltaP_pred = R_i.unrotate(p_err_world);
+
+    // 6. Compute error terms
     Vector3 error_R = Rot3::Logmap(deltaR_pred * deltaR_corrected.inverse());
     Vector3 error_p = deltaP_pred - deltaP_corrected;
     Vector3 error_v = deltaV_pred - deltaV_corrected;
 
-    Vector9 error9D;
-    error9D.segment<3>(NAV_R_IDX) = error_R;
-    error9D.segment<3>(NAV_P_IDX) = error_p;
-    error9D.segment<3>(NAV_V_IDX) = error_v;
+    // 7. Construct the complete error vector
+    Vector9 error;
+    error.segment<3>(NAV_R_IDX) = error_R;
+    error.segment<3>(NAV_P_IDX) = error_p;
+    error.segment<3>(NAV_V_IDX) = error_v;
 
-    if (H_pose_i || H_vel_i || H_pose_j || H_vel_j || H_bias_i) {
-        std::function<Vector9(const Pose3&, const Vector3&, const Pose3&, const Vector3&, const imuBias::ConstantBias&)>
-        compute_full_error_for_jacobian_lambda =
-            [this](const Pose3& current_pose_i, const Vector3& current_vel_i,
-                   const Pose3& current_pose_j, const Vector3& current_vel_j,
-                   const imuBias::ConstantBias& current_bias_i) -> Vector9 {
+    // 8. Compute analytical Jacobians if requested
+    if (H1 || H2 || H3 || H4 || H5) {
+        // For now, let's use numerical Jacobians just for H5 (bias) and analytical for the rest
+        Matrix3 R_i_matrix = R_i.matrix();
+        Matrix3 R_j_matrix = R_j.matrix();
+        Matrix3 R_between = deltaR_pred.matrix();
+        Matrix3 R_corrected_inv = deltaR_corrected.inverse().matrix();
+        Matrix3 R_error = (deltaR_pred * deltaR_corrected.inverse()).matrix();
 
-            Vector9 current_pim_corr = this->biasCorrectedDelta(current_bias_i, {});
-            const Rot3& c_deltaR_nominal = this->deltaUpsilon_.rotation();
-            const Vector3 c_deltaP_nominal = this->deltaUpsilon_.position();
-            const Vector3& c_deltaV_nominal = this->deltaUpsilon_.velocity();
-            Rot3 c_deltaR_corr = c_deltaR_nominal * Rot3::Expmap(current_pim_corr.segment<3>(NAV_R_IDX));
-            Vector3 c_deltaP_corr = c_deltaP_nominal + current_pim_corr.segment<3>(NAV_P_IDX);
-            Vector3 c_deltaV_corr = c_deltaV_nominal + current_pim_corr.segment<3>(NAV_V_IDX);
+        if (H1) {  // Jacobian wrt pose_i
+            H1->resize(9, 6);
+            // Fill rotation error Jacobian wrt pose_i (rotation part)
+            // For rotational error, we need to compute d(Log(R_i.between(R_j) * deltaR_corr^-1))/d(R_i)
+            Matrix3 D_error_R_wrt_R_i = -R_error.transpose() * R_j_matrix.transpose();
+            H1->block<3,3>(NAV_R_IDX, 0) = D_error_R_wrt_R_i;
 
-            const Rot3& cR_i = current_pose_i.rotation();
-            const Vector3 cp_i = current_pose_i.translation();
-            const Rot3& cR_j = current_pose_j.rotation();
-            const Vector3 cp_j = current_pose_j.translation();
-            double cDeltaT = this->deltaTij();
-            const Vector3& cn_gravity_w = this->galileanParams()->n_gravity;
+            // Position error is d(R_i^T * (p_j - p_i - v_i*dt - 0.5*g*dt^2) - deltaP_corr)/d(R_i, p_i)
+            H1->block<3,3>(NAV_P_IDX, 0) = skewSymmetric(deltaP_pred);
+            H1->block<3,3>(NAV_P_IDX, 3) = -R_i_matrix.transpose();
 
-            Rot3 cDeltaR_pred = cR_i.between(cR_j);
-            Vector3 cv_err_w = current_vel_j - current_vel_i - cn_gravity_w * cDeltaT;
-            Vector3 cDeltaV_pred = cR_i.unrotate(cv_err_w);
-            Vector3 cp_err_w = cp_j - cp_i - current_vel_i * cDeltaT - 0.5 * cn_gravity_w * cDeltaT * cDeltaT;
-            Vector3 cDeltaP_pred = cR_i.unrotate(cp_err_w);
-
-            Vector3 cError_R = Rot3::Logmap(cDeltaR_pred * c_deltaR_corr.inverse());
-            Vector3 cError_p = cDeltaP_pred - c_deltaP_corr;
-            Vector3 cError_v = cDeltaV_pred - c_deltaV_corr;
-
-            Vector9 cError9D_lambda; // Use different name for clarity
-            cError9D_lambda.segment<3>(NAV_R_IDX) = cError_R;
-            cError9D_lambda.segment<3>(NAV_P_IDX) = cError_p;
-            cError9D_lambda.segment<3>(NAV_V_IDX) = cError_v;
-            return cError9D_lambda;
-        };
-
-        double numerical_step = 1e-7;
-        if (H_pose_i) {
-            *H_pose_i = numericalDerivative51<Vector9, Pose3, Vector3, Pose3, Vector3, imuBias::ConstantBias>(
-                compute_full_error_for_jacobian_lambda, pose_i, vel_i, pose_j, vel_j, bias_i, numerical_step);
+            // Velocity error is d(R_i^T * (v_j - v_i - g*dt) - deltaV_corr)/d(R_i, p_i)
+            H1->block<3,3>(NAV_V_IDX, 0) = skewSymmetric(deltaV_pred);
+            H1->block<3,3>(NAV_V_IDX, 3).setZero();
         }
-        if (H_vel_i) {
-            *H_vel_i = numericalDerivative52<Vector9, Pose3, Vector3, Pose3, Vector3, imuBias::ConstantBias>(
-                compute_full_error_for_jacobian_lambda, pose_i, vel_i, pose_j, vel_j, bias_i, numerical_step);
+
+        if (H2) {  // Jacobian wrt vel_i
+            H2->resize(9, 3);
+            H2->block<3,3>(NAV_R_IDX, 0).setZero();
+            H2->block<3,3>(NAV_P_IDX, 0) = -R_i_matrix.transpose() * deltaT;
+            H2->block<3,3>(NAV_V_IDX, 0) = -R_i_matrix.transpose();
         }
-        if (H_pose_j) {
-             *H_pose_j = numericalDerivative53<Vector9, Pose3, Vector3, Pose3, Vector3, imuBias::ConstantBias>(
-                compute_full_error_for_jacobian_lambda, pose_i, vel_i, pose_j, vel_j, bias_i, numerical_step);
+
+        if (H3) {  // Jacobian wrt pose_j
+            H3->resize(9, 6);
+            // Rotation error wrt R_j: d(Log(R_i.between(R_j) * deltaR_corr^-1))/d(R_j)
+            H3->block<3,3>(NAV_R_IDX, 0) = R_error.transpose();
+            H3->block<3,3>(NAV_R_IDX, 3).setZero();
+
+            // Position and velocity errors wrt pose_j
+            H3->block<3,3>(NAV_P_IDX, 0).setZero();
+            H3->block<3,3>(NAV_P_IDX, 3) = R_i_matrix.transpose();
+            H3->block<3,3>(NAV_V_IDX, 0).setZero();
+            H3->block<3,3>(NAV_V_IDX, 3).setZero();
         }
-        if (H_vel_j) {
-            *H_vel_j = numericalDerivative54<Vector9, Pose3, Vector3, Pose3, Vector3, imuBias::ConstantBias>(
-                compute_full_error_for_jacobian_lambda, pose_i, vel_i, pose_j, vel_j, bias_i, numerical_step);
+
+        if (H4) {  // Jacobian wrt vel_j
+            H4->resize(9, 3);
+            H4->block<3,3>(NAV_R_IDX, 0).setZero();
+            H4->block<3,3>(NAV_P_IDX, 0).setZero();
+            H4->block<3,3>(NAV_V_IDX, 0) = R_i_matrix.transpose();
         }
-        if (H_bias_i) {
-            *H_bias_i = -H_pim_correction_wrt_bias_i_calc;
+
+        if (H5) {  // Jacobian wrt bias_i
+            // For the bias Jacobian, we'll use a simpler approach based on the bias Jacobian
+            // stored in preintBiasJacobian_
+            Matrix96 H_bias = Matrix96::Zero();
+
+            // Here we use the chain rule:
+            // d(error)/d(bias) = d(error)/d(deltaUpsilon_corrected) * d(deltaUpsilon_corrected)/d(bias)
+
+            // For the rotation component:
+            // We know that error_R = Log(deltaR_pred * deltaR_corrected^-1)
+            // d(error_R)/d(deltaR_corrected) = -J_r^-1(error_R) * deltaR_pred
+            so3::DexpFunctor dexp_functor(error_R);
+            Matrix3 Jr_inv = dexp_functor.rightJacobianInverse();
+            Matrix3 D_error_R_deltaR = -Jr_inv * R_between * R_corrected_inv;
+
+            // Rotation error Jacobian wrt bias
+            H_bias.block<3,3>(NAV_R_IDX, 3) = D_error_R_deltaR * preintBiasJacobian_.block<3,3>(ups_R_idx, bias_w_idx);
+
+            // Position and velocity error Jacobians wrt bias - direct effect of bias on measurements
+            H_bias.block<3,3>(NAV_P_IDX, 0) = -preintBiasJacobian_.block<3,3>(ups_p_idx, bias_a_idx);
+            H_bias.block<3,3>(NAV_P_IDX, 3) = -preintBiasJacobian_.block<3,3>(ups_p_idx, bias_w_idx);
+            H_bias.block<3,3>(NAV_V_IDX, 0) = -preintBiasJacobian_.block<3,3>(ups_v_idx, bias_a_idx);
+            H_bias.block<3,3>(NAV_V_IDX, 3) = -preintBiasJacobian_.block<3,3>(ups_v_idx, bias_w_idx);
+
+            *H5 = H_bias;
         }
     }
-    return error9D;
+
+    return error;
 }
 
 NavState PreintegratedGalileanMeasurements::predict(const NavState& state_i,
@@ -458,71 +409,72 @@ NavState PreintegratedGalileanMeasurements::predict(const NavState& state_i,
     OptionalJacobian<9, 9> H_navstate_wrt_navstate_i,
     OptionalJacobian<9, 6> H_navstate_wrt_bias_i) const {
 
-    Matrix96 H_pim_correction_wrt_bias_diff_calc;
-    Vector9 pim_navstate_correction = biasCorrectedDelta(bias_i, H_pim_correction_wrt_bias_diff_calc);
+    // Get the bias correction using the existing method
+    Matrix96 H_correction_wrt_bias;
+    Vector9 correction = biasCorrectedDelta(bias_i,
+                            H_navstate_wrt_bias_i ? &H_correction_wrt_bias : nullptr);
 
-    const Rot3& deltaR_nominal = deltaUpsilon_.rotation();
-    const Vector3 deltaP_nominal = deltaUpsilon_.position();
-    const Vector3& deltaV_nominal = deltaUpsilon_.velocity();
+    // Extract components from correction vector (in NavState tangent space)
+    Vector3 theta = correction.segment<3>(NAV_R_IDX);
+    Vector3 pos_correction = correction.segment<3>(NAV_P_IDX);
+    Vector3 vel_correction = correction.segment<3>(NAV_V_IDX);
 
-    Rot3 deltaR_corrected = deltaR_nominal * Rot3::Expmap(pim_navstate_correction.segment<3>(NAV_R_IDX));
-    Vector3 deltaP_corrected = deltaP_nominal + pim_navstate_correction.segment<3>(NAV_P_IDX);
-    Vector3 deltaV_corrected = deltaV_nominal + pim_navstate_correction.segment<3>(NAV_V_IDX);
+    // Apply corrections to obtain bias-corrected values
+    Rot3 deltaR_corrected = deltaUpsilon_.rotation() * Rot3::Expmap(theta);
+    Vector3 deltaP_corrected = deltaUpsilon_.position() + pos_correction;
+    Vector3 deltaV_corrected = deltaUpsilon_.velocity() + vel_correction;
 
-    const Pose3& pose_i = state_i.pose();
-    const Rot3& R_i = pose_i.rotation();
-    const Point3& p_i_pt = pose_i.translation();
-    const Vector3& vel_i = state_i.velocity();
-
-    auto params = galileanParams();
-    const Vector3& n_gravity_w = params->n_gravity;
+    // Apply standard physics to predict new state
+    const Rot3& R_i = state_i.attitude();
+    const Point3& p_i = state_i.position();
+    const Vector3& v_i = state_i.velocity();
     double deltaT = deltaTij();
-    double deltaT2 = deltaT * deltaT;
+    const Vector3& gravity = galileanParams()->n_gravity;
 
     Rot3 R_j = R_i * deltaR_corrected;
-    Vector3 vel_j = vel_i + R_i * deltaV_corrected + n_gravity_w * deltaT;
-    Point3 p_j = p_i_pt + Point3(R_i * deltaP_corrected + vel_i * deltaT + 0.5 * n_gravity_w * deltaT2);
+    Vector3 v_j = v_i + R_i * deltaV_corrected + gravity * deltaT;
+    Point3 p_j = p_i + Point3(R_i * deltaP_corrected + v_i * deltaT + 0.5 * gravity * deltaT * deltaT);
 
-    if (H_navstate_wrt_navstate_i || H_navstate_wrt_bias_i) {
-        std::function<NavState(const NavState&, const imuBias::ConstantBias&)>
-        predict_wrapper_for_jacobian_lambda =
-            [this](const NavState& current_state_i, const imuBias::ConstantBias& current_bias_i) -> NavState {
-            Vector9 current_pim_corr = this->biasCorrectedDelta(current_bias_i, {});
+    NavState predicted(Pose3(R_j, p_j), v_j);
 
-            const Rot3& c_deltaR_nominal = this->deltaUpsilon_.rotation();
-            const Vector3 c_deltaP_nominal = this->deltaUpsilon_.position();
-            const Vector3& c_deltaV_nominal = this->deltaUpsilon_.velocity();
+    // Calculate Jacobians if requested
+    if (H_navstate_wrt_navstate_i) {
+        auto predict_wrapper = [this, &gravity](const NavState& s, const imuBias::ConstantBias& b) {
+            Vector9 corr = this->biasCorrectedDelta(b);
 
-            Rot3 c_deltaR = c_deltaR_nominal * Rot3::Expmap(current_pim_corr.segment<3>(NAV_R_IDX));
-            Vector3 c_deltaP = c_deltaP_nominal + current_pim_corr.segment<3>(NAV_P_IDX);
-            Vector3 c_deltaV = c_deltaV_nominal + current_pim_corr.segment<3>(NAV_V_IDX);
+            // Extract and apply corrections
+            const Rot3& R = s.attitude();
+            const Point3& p = s.position();
+            const Vector3& v = s.velocity();
 
-            const Rot3& cR_i = current_state_i.attitude();
-            const Point3& cp_i_pt = current_state_i.position();
-            const Vector3& cvel_i = current_state_i.velocity();
-            double cDeltaT = this->deltaTij();
-            double cDeltaT2 = cDeltaT * cDeltaT;
-            const Vector3& cn_gravity_w = this->galileanParams()->n_gravity;
+            Rot3 deltaR_corr = this->deltaUpsilon_.rotation() *
+                               Rot3::Expmap(corr.segment<3>(NAV_R_IDX));
+            Vector3 deltaP_corr = this->deltaUpsilon_.position() +
+                                  corr.segment<3>(NAV_P_IDX);
+            Vector3 deltaV_corr = this->deltaUpsilon_.velocity() +
+                                  corr.segment<3>(NAV_V_IDX);
 
-            Rot3 cR_j = cR_i * c_deltaR;
-            Vector3 cvel_j = cvel_i + cR_i * c_deltaV + cn_gravity_w * cDeltaT;
-            Point3 cp_j = cp_i_pt + Point3(cR_i * c_deltaP + cvel_i * cDeltaT + 0.5 * cn_gravity_w * cDeltaT2);
-            return NavState(Pose3(cR_j, cp_j), cvel_j);
+            double dt = this->deltaTij();
+
+            return NavState(
+                Pose3(R * deltaR_corr,
+                      p + Point3(R * deltaP_corr + v * dt + 0.5 * gravity * dt * dt)),
+                v + R * deltaV_corr + gravity * dt
+            );
         };
 
-        double numerical_step_predict = 1e-7; // Consistent delta for these Jacobians
-
-        if (H_navstate_wrt_navstate_i) {
-            *H_navstate_wrt_navstate_i = numericalDerivative21<NavState, NavState, imuBias::ConstantBias>(
-                predict_wrapper_for_jacobian_lambda, state_i, bias_i, numerical_step_predict);
-        }
-        if (H_navstate_wrt_bias_i) {
-            *H_navstate_wrt_bias_i = numericalDerivative22<NavState, NavState, imuBias::ConstantBias>(
-                predict_wrapper_for_jacobian_lambda, state_i, bias_i, numerical_step_predict);
-        }
+        *H_navstate_wrt_navstate_i = numericalDerivative21<NavState, NavState, imuBias::ConstantBias>(
+            predict_wrapper, state_i, bias_i, 1e-7);
     }
-    return NavState(Pose3(R_j, p_j), vel_j);
+
+    if (H_navstate_wrt_bias_i) {
+        *H_navstate_wrt_bias_i = H_correction_wrt_bias; // Already computed above
+    }
+
+    return predicted;
 }
+
+
 
 
 // --- Implementations for GalileanImuFactor ---
@@ -559,27 +511,49 @@ bool GalileanImuFactor::equals(const NonlinearFactor& expected, double tol) cons
   return e != nullptr && Base::equals(*e, tol) && _PIM.equals(e->_PIM, tol);
 }
 
-Vector GalileanImuFactor::evaluateError(const Pose3& pose_i, const Vector3& vel_i, const imuBias::ConstantBias& bias_i,
-                                       const Pose3& pose_j, const Vector3& vel_j, const imuBias::ConstantBias& bias_j,
+Vector GalileanImuFactor::evaluateError(const Pose3& pose_i, const Vector3& vel_i,
+                                       const imuBias::ConstantBias& bias_i,
+                                       const Pose3& pose_j, const Vector3& vel_j,
+                                       const imuBias::ConstantBias& bias_j,
                                        OptionalMatrixType H1, OptionalMatrixType H2,
-                                       OptionalMatrixType H3,
-                                       OptionalMatrixType H4, OptionalMatrixType H5,
-                                       OptionalMatrixType H6) const {
+                                       OptionalMatrixType H3, OptionalMatrixType H4,
+                                       OptionalMatrixType H5, OptionalMatrixType H6) const {
+    // Part 1: Compute bias evolution error (as in CombinedImuFactor)
+    Matrix6 Hbias_i, Hbias_j;
+    Vector6 fbias = traits<imuBias::ConstantBias>::Between(bias_j, bias_i,
+        H6 ? &Hbias_j : nullptr, H3 ? &Hbias_i : nullptr).vector();
+
+    // Part 2: Compute navigation state error using Galilean formulation
     boost::optional<Matrix&> pimH_pose_i = H1 ? boost::optional<Matrix&>(*H1) : boost::none;
     boost::optional<Matrix&> pimH_vel_i  = H2 ? boost::optional<Matrix&>(*H2) : boost::none;
+    boost::optional<Matrix&> pimH_bias_i = H3 ? boost::optional<Matrix&>(*H3) : boost::none;
     boost::optional<Matrix&> pimH_pose_j = H4 ? boost::optional<Matrix&>(*H4) : boost::none;
     boost::optional<Matrix&> pimH_vel_j  = H5 ? boost::optional<Matrix&>(*H5) : boost::none;
-    boost::optional<Matrix&> pimH_bias_i = H3 ? boost::optional<Matrix&>(*H3) : boost::none;
 
-    Vector9 error = _PIM.computeErrorAndJacobians(pose_i, vel_i, pose_j, vel_j, bias_i,
+    Vector9 r_nav = _PIM.computeErrorAndJacobians(pose_i, vel_i, pose_j, vel_j, bias_i,
                                                 pimH_pose_i, pimH_vel_i,
-                                                pimH_pose_j,
-                                                pimH_vel_j,
+                                                pimH_pose_j, pimH_vel_j,
                                                 pimH_bias_i);
-    if (H6) {
-        H6->setZero(9, 6);
+
+    // Combine and return the full error vector
+    Vector15 error;
+    error << r_nav, fbias;
+
+    // Properly structure the Jacobians to match the error vector
+    if (H3) {  // bias_i Jacobian needs special handling
+        H3->resize(15, 6);
+        H3->block<9, 6>(0, 0) = *pimH_bias_i;  // Navigation error w.r.t bias_i
+        H3->block<6, 6>(9, 0) = Hbias_i;       // Bias error w.r.t bias_i
     }
-    return error;
+
+    if (H6) {  // bias_j Jacobian
+        H6->resize(15, 6);
+        H6->block<9, 6>(0, 0).setZero();  // Navigation error doesn't depend on bias_j
+        H6->block<6, 6>(9, 0) = Hbias_j;  // Bias error w.r.t bias_j
+    }
+
+    return error; // @TODO - should probably return full 15D vector, but need to modify tests
+    // return r_nav;
 }
 
 } // namespace gtsam
