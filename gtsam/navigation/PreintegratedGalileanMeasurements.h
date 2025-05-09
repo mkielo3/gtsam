@@ -230,12 +230,14 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
 
 
 private:
+
   // Internal helper to map 6D bias vector (acc, gyro) to 10D bias tangent vector (b_omega, b_acc, 0, 0)
   static Vector10 mapBias6ToTangent10(const Vector6& bias6D); // Implementation moved to cpp
 
   // Internal helper to map 10D measurement vector (omega, acc, 0, 1) to 10D tangent vector (rho=0, nu=acc, theta=omega, t=1)
   static Vector10 mapMeasurement10ToTangent10(const Vector10& measurement10D); // Implementation moved to cpp
 
+  size_t integration_step_counter_{0};
 
   /** Serialization function */
 #if GTSAM_ENABLE_BOOST_SERIALIZATION
