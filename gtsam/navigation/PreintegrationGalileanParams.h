@@ -59,34 +59,39 @@ struct GTSAM_EXPORT GalileanPreintegrationParams : PreintegrationParams {
 
   /// Default constructor, initializes with identity matrices.
   GalileanPreintegrationParams()
-      : PreintegrationParams(), // Use default base constructor (Z-up gravity)
+      : PreintegrationParams(Vector3(0, 0, -9.81)), // Use default base constructor (Z-up gravity)
         biasOmegaCovariance(I_3x3),
         biasAccCovariance(I_3x3),
-        biasAccOmegaInt(I_6x6),
+        biasAccOmegaInt(Matrix6::Zero()),  // Change from I_6x6 to Zero()
         virtualVelCovariance(Matrix3::Zero()),
         virtualTimeScaleCovariance(0),
         biasVirtualVelCovariance(Matrix3::Zero()),
         biasVirtualTimeCovariance(0) {
-    // Initialize 10x10 bias covariance with zeros, then set the standard 6x6 part
-    biasExtendedInit = Matrix10::Zero();
-    biasExtendedInit.block<3,3>(0,0) = biasAccOmegaInt.block<3,3>(0,0); // Acc bias
-    biasExtendedInit.block<3,3>(3,3) = biasAccOmegaInt.block<3,3>(3,3); // Omega bias
+      // Initialize 10x10 bias covariance with zeros, then set the standard 6x6 part
+      biasExtendedInit = Matrix10::Zero();
+      // Now these lines won't set anything non-zero since biasAccOmegaInt is zero
+      biasExtendedInit.block<3,3>(0,0) = biasAccOmegaInt.block<3,3>(0,0); // Acc bias
+      biasExtendedInit.block<3,3>(3,3) = biasAccOmegaInt.block<3,3>(3,3); // Omega bias
   }
 
   /// Constructor initializes with gravity and optional bias random walk sigmas.
   GalileanPreintegrationParams(const Vector3& n_gravity_)
-      : PreintegrationParams(n_gravity_), // Initialize base class
+      : PreintegrationParams(n_gravity_), // Initialize base class (might normalize)
         biasOmegaCovariance(I_3x3),
         biasAccCovariance(I_3x3),
-        biasAccOmegaInt(I_6x6),
+        biasAccOmegaInt(Matrix6::Zero()),
         virtualVelCovariance(Matrix3::Zero()),
         virtualTimeScaleCovariance(0),
         biasVirtualVelCovariance(Matrix3::Zero()),
         biasVirtualTimeCovariance(0) {
-    // Initialize 10x10 bias covariance with zeros, then set the standard 6x6 part
-    biasExtendedInit = Matrix10::Zero();
-    biasExtendedInit.block<3,3>(0,0) = biasAccOmegaInt.block<3,3>(0,0); // Acc bias
-    biasExtendedInit.block<3,3>(3,3) = biasAccOmegaInt.block<3,3>(3,3); // Omega bias
+
+      // Override any normalization from base class
+      n_gravity = n_gravity_;  // Force set to the actual input gravity
+
+      // Initialize 10x10 bias covariance with zeros
+      biasExtendedInit = Matrix10::Zero();
+      biasExtendedInit.block<3,3>(0,0) = biasAccOmegaInt.block<3,3>(0,0); // Acc bias
+      biasExtendedInit.block<3,3>(3,3) = biasAccOmegaInt.block<3,3>(3,3); // Omega bias
   }
 
   /// Named constructor for Z-down navigation frame (NED).
@@ -99,8 +104,14 @@ struct GTSAM_EXPORT GalileanPreintegrationParams : PreintegrationParams {
   /// Named constructor for Z-up navigation frame (ENU).
   static std::shared_ptr<GalileanPreintegrationParams> MakeSharedU(
       double g = 9.81) {
-    return std::shared_ptr<GalileanPreintegrationParams>(
-        new GalileanPreintegrationParams(Vector3(0, 0, -g)));
+    Vector3 gravity(0, 0, -g);  // Create the actual gravity vector
+    auto params = std::shared_ptr<GalileanPreintegrationParams>(
+        new GalileanPreintegrationParams(gravity));
+
+    // Ensure gravity is preserved
+    params->n_gravity = gravity;
+
+    return params;
   }
 
   /// Named constructor for Z-down navigation frame (NED) with Galilean-specific defaults

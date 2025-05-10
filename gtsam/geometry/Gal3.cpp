@@ -273,6 +273,14 @@ gtsam::Gal3 gtsam::Gal3::Expmap(const Vector10& xi, OptionalJacobian<10, 10> Hxi
 }
 
 //------------------------------------------------------------------------------
+Matrix10 Gal3::LeftJacobian(const Vector10& u) {
+  // Jl(u) = Jr(-u)
+  // GTSAM's ExpmapDerivative(xi) computes Jr(xi).
+  // Therefore, LeftJacobian(u) is ExpmapDerivative(-u).
+  return Gal3::ExpmapDerivative(-u);
+}
+
+//------------------------------------------------------------------------------
 Vector10 Gal3::Logmap(const Gal3& g, OptionalJacobian<10, 10> Hg_out) {
     // Implements logarithmic map from Equations 20-23, Page 8
     const Vector3 theta_vec = Rot3::Logmap(g.R_); // theta_tan = Log_SO3(R) (Equation 22)

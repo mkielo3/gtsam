@@ -111,9 +111,14 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
   * @brief Current state accessor
   * @return Current state as a GalileanState object
   */
- GalileanState xi() const {
-     return {deltaUpsilon_, mapBias6ToTangent10(biasHat_.vector())};
- }
+  GalileanState xi() const {
+      // Should properly compute current state from deltaUpsilon_ and biasHat_
+      Vector10 biasVec = Vector10::Zero();
+      biasVec.segment<3>(bias_w_comp_idx) = biasHat_.gyroscope();
+      biasVec.segment<3>(bias_a_comp_idx) = biasHat_.accelerometer();
+      return {deltaUpsilon_, biasVec};
+  }
+
 
  /**
   * @brief Transforms an input by the inverse of a state
@@ -134,10 +139,18 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
   * @param dt Time step
   * @return Updated Gal3 measurement
   */
- Gal3 Lambda(const GalileanState& state, const GalileanInput& u, double dt) const {
-     Vector10 w_hat = u.w - state.bias;
-     return Gal3::Expmap(mapMeasurement10ToTangent10(w_hat) * dt);
- }
+  Gal3 Lambda(const GalileanState& state, const GalileanInput& u, double dt) const {
+      Vector10 w_hat = u.w - state.bias;
+
+      // Convert to tangent space ordering for GTSAM's Gal3
+      Vector10 tangent = Vector10::Zero();
+      tangent.segment<3>(ups_p_idx) = w_hat.segment<3>(bias_nu_comp_idx);  // virtual vel -> position
+      tangent.segment<3>(ups_v_idx) = w_hat.segment<3>(bias_a_comp_idx);   // acc -> velocity
+      tangent.segment<3>(ups_R_idx) = w_hat.segment<3>(bias_w_comp_idx);   // gyro -> rotation
+      tangent(ups_t_idx) = w_hat(bias_rho_comp_idx);                       // virtual time -> time
+
+      return Gal3::Expmap(tangent * dt);
+  }
 
  protected: // Internal state representation
   /// Preintegrated measurement mean \hat{\Upsilon}_k (stores deltaR, deltaP, deltaV, deltaT)
@@ -285,14 +298,15 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
   bool equals(const PreintegratedGalileanMeasurements& other, double tol = 1e-9) const;
   /// @}
 
-
-private:
-
+  // Made public for testing
   // Internal helper to map 6D bias vector (acc, gyro) to 10D bias tangent vector
   static Vector10 mapBias6ToTangent10(const Vector6& bias6D);
 
   // Internal helper to map 10D measurement vector to 10D tangent vector
   static Vector10 mapMeasurement10ToTangent10(const Vector10& measurement10D);
+
+
+private:
 
 
   /** Serialization function */

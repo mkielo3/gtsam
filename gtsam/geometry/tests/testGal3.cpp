@@ -1215,6 +1215,89 @@ TEST(Gal3, Expmap_PreintCase) {
 /* ************************************************************************* */
 
 
+
+
+
+
+/* ************************************************************************* */
+TEST(Gal3, LeftJacobian) {
+    const double kJacTol = 1e-7; // Tolerance for Jacobian checks
+
+    // Test Case 1: First random state from reference implementation
+    const Vector10 w1 = (Vector10() <<
+        0.0498557, -1.63449, 2.002, 3.12355, -2.69218, 1.779, 2.279, -0.73944, -3.22718, 3.47172
+    ).finished();
+
+    const Matrix10 expected_Jl1 = (Matrix10() <<
+        0.999889, -0.0100108, -0.00817031, 0, 0, 0, 0, 0, 0, 0,
+        0.0100081, 0.999933, -0.000303789, 0, 0, 0, 0, 0, 0, 0,
+        0.00817364, 0.00019474, 0.999955, 0, 0, 0, 0, 0, 0, 0,
+        -0.000265424, -0.00898045, -0.0133534, 0.999889, -0.0100108, -0.00817031, 0, 0, 0, 0,
+        0.00880585, -0.000123939, -0.0157551, 0.0100081, 0.999933, -0.000303789, 0, 0, 0, 0,
+        0.0135647, 0.0154785, -0.000151863, 0.00817364, 0.00019474, 0.999955, 0, 0, 0, 0,
+        0.000178538, 0.0161758, -0.0034705, -0.0173545, 0.000231751, 0.000189107, 0.999889, -0.0100108, -0.00817031, 0.0156582,
+        -0.0162989, 0.000213097, -0.0111484, -0.000231652, -0.0173562, 7.75774e-06, 0.0100081, 0.999933, -0.000303789, -0.013358,
+        0.00361444, 0.0112786, -4.19966e-05, -0.000189228, -3.78236e-06, -0.017357, 0.00817364, 0.00019474, 0.999955, 0.00897803,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+    ).finished();
+
+    Matrix10 computed_Jl1 = Gal3::LeftJacobian(w1);
+    EXPECT(assert_equal(expected_Jl1, computed_Jl1, kJacTol));
+
+    // Test Case 2: Second random state from reference implementation
+    const Vector10 w2 = (Vector10() <<
+        1.21855, -2.57483, -3.82525, -2.06083, -1.40631, 2.42462, -1.18527, 0.619, -3.35203, -4.36424
+    ).finished();
+
+    const Matrix10 expected_Jl2 = (Matrix10() <<
+        0.999646, 0.0190704, -0.0129494, 0, 0, 0, 0, 0, 0, 0,
+        -0.0191749, 0.999731, -0.00592746, 0, 0, 0, 0, 0, 0, 0,
+        0.012794, 0.00625574, 0.999865, 0, 0, 0, 0, 0, 0, 0,
+        0.000188409, -0.0120583, -0.00685136, 0.999646, 0.0190704, -0.0129494, 0, 0, 0, 0,
+        0.0121781, 0.0003928, 0.010287, -0.0191749, 0.999731, -0.00592746, 0, 0, 0, 0,
+        0.00721256, -0.0103157, -3.69996e-05, 0.012794, 0.00625574, 0.999865, 0, 0, 0, 0,
+        -0.000371134, 0.0166426, 0.00300512, 0.0218096, 0.00055464, -0.00037703, 0.999646, 0.0190704, -0.0129494, -0.0104963,
+        -0.0165138, -0.00037278, 0.00618126, -0.000558063, 0.0218124, -0.000171856, -0.0191749, 0.999731, -0.00592746, -0.0069472,
+        -0.0029842, -0.00597302, 0.000100687, 0.000371945, 0.0001826, 0.0218168, 0.012794, 0.00625574, 0.999865, 0.0120051,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+    ).finished();
+
+    Matrix10 computed_Jl2 = Gal3::LeftJacobian(w2);
+    EXPECT(assert_equal(expected_Jl2, computed_Jl2, kJacTol));
+
+    // Test Case 3: Zero vector (should return identity)
+    const Vector10 w_zero = Vector10::Zero();
+    Matrix10 expected_Jl_zero = Matrix10::Identity();
+    Matrix10 computed_Jl_zero = Gal3::LeftJacobian(w_zero);
+    EXPECT(assert_equal(expected_Jl_zero, computed_Jl_zero, kTol));
+
+    // Test Case 4: Verify relationship Jl(u) = Jr(-u) = ExpmapDerivative(-u)
+    // This tests the comment in the header file
+    const Vector10 test_vec = (Vector10() <<
+        0.1, -0.2, 0.15, 0.05, -0.1, 0.08, 0.2, -0.3, 0.12, 0.25
+    ).finished();
+
+    Matrix10 computed_Jl = Gal3::LeftJacobian(test_vec);
+    Matrix10 expected_Jr_neg = Gal3::ExpmapDerivative(-test_vec);
+    EXPECT(assert_equal(expected_Jr_neg, computed_Jl, kTol));
+
+    // Test Case 5: Property test - Jl * u should be close to Log(Exp(u))
+    const Vector10 test_vec2 = (Vector10() <<
+        0.05, -0.1, 0.08, 0.02, -0.05, 0.04, 0.1, -0.15, 0.06, 0.12
+    ).finished();
+
+    Matrix10 Jl = Gal3::LeftJacobian(test_vec2);
+    Vector10 Jl_u = Jl * test_vec2;
+
+    // Exp(u)
+    Gal3 exp_u = Gal3::Expmap(test_vec2);
+    // Log(Exp(u))
+    Vector10 log_exp_u = Gal3::Logmap(exp_u);
+
+    // For small perturbations, Jl * u should approximate Log(Exp(u))
+    EXPECT(assert_equal(log_exp_u, Jl_u, kTol * 10));
+}
+
 /* ************************************************************************* */
 int main() {
     TestResult tr;

@@ -36,7 +36,7 @@ using symbol_shorthand::B; // IMU Bias
 constexpr double kGravity = 9.81;       // m/s^2
 constexpr double kDt = 0.005;           // 200 Hz
 constexpr size_t kNumSteps = 6000;      // 30 seconds
-constexpr size_t kNumMonteCarloRuns = 100; // Number of Monte Carlo runs
+constexpr size_t kNumMonteCarloRuns = 1; // Number of Monte Carlo runs
 
 // Noise parameters based on the paper
 struct NoiseParameters {
