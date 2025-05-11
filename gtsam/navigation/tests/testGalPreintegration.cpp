@@ -5,6 +5,7 @@
 #include <gtsam/geometry/SO3.h>
 #include <gtsam/base/numericalDerivative.h>
 #include <gtsam/base/TestableAssertions.h>
+#include <iomanip>
 
 #include <CppUnitLite/TestHarness.h>
 
@@ -23,6 +24,44 @@ static const Vector3 kZero = Z_3x1; // Define kZero to avoid ambiguity
 typedef Eigen::Matrix<double, 20, 20> Matrix20;
 typedef Eigen::Matrix<double, 10, 10> Matrix10;
 typedef Eigen::Matrix<double, 9, 6> Matrix96;
+
+
+auto flattenAndSort = [](const Matrix& m) {
+    std::vector<double> v(m.size());
+    Eigen::Map<Eigen::VectorXd>(v.data(), m.size()) = Eigen::Map<const Eigen::VectorXd>(m.data(), m.size());
+    std::sort(v.begin(), v.end());
+    return v;
+};
+
+
+Matrix20 convertLieplusplusToGTSAMOrdering20(const Matrix20& lieplusplus_matrix) {
+    // Create permutation matrix for 10D vector: [w,v,p,s] -> [rho,nu,theta,t]
+    // GTSAM indices: rho(0-2), nu(3-5), theta(6-8), t(9)
+    // Lieplusplus indices: w(0-2), v(3-5), p(6-8), s(9)
+    // Mapping: rho<-p, nu<-v, theta<-w, t<-s
+    std::vector<int> perm10 = {6,7,8,3,4,5,0,1,2,9};
+
+    // For 20D augmented state, apply same permutation to first 10 (Upsilon) and last 10 (bias)
+    std::vector<int> perm20;
+    for (int i = 0; i < 10; i++) {
+        perm20.push_back(perm10[i]);
+    }
+    for (int i = 0; i < 10; i++) {
+        perm20.push_back(perm10[i] + 10);
+    }
+
+    // Apply permutation to both rows and columns
+    Matrix20 gtsam_matrix;
+    for (int i = 0; i < 20; i++) {
+        for (int j = 0; j < 20; j++) {
+            gtsam_matrix(perm20[i], perm20[j]) = lieplusplus_matrix(i, j);
+        }
+    }
+
+    return gtsam_matrix;
+}
+
+
 
 // Helper functions to generate test vectors (kept for potential other uses, but not for modified tests)
 vector<Vector3> createTestAccels(size_t n) {
@@ -97,85 +136,85 @@ Matrix3 computeGamma2(const Vector3& omega) {
 
 /* ************************************************************************* */
 // Test Case 1: Constructors
-// TEST(GalPreintegration, Constructors) {
-//     for (int i = 0; i < N_TESTS; ++i) { // N_TESTS can be 1 for this, as it's not randomized here
-//         {
-//             // Test default constructor with default parameters
-//             auto p = std::make_shared<GalileanPreintegrationParams>();
-//             PreintegratedGalileanMeasurements pim(p);
+TEST(GalPreintegration, Constructors) {
+    for (int i = 0; i < N_TESTS; ++i) { // N_TESTS can be 1 for this, as it's not randomized here
+        {
+            // Test default constructor with default parameters
+            auto p = std::make_shared<GalileanPreintegrationParams>();
+            PreintegratedGalileanMeasurements pim(p);
 
-//             Matrix20 expectedQc = Matrix20::Identity();
-//             expectedQc.block<3,3>(6,6).setZero();  // virtual velocity noise block (3D)
-//             expectedQc(9,9) = 0.0;                 // virtual time scale noise block (1D)
-//             expectedQc.block<3,3>(16,16).setZero(); // virtual velocity bias noise block (3D)
-//             expectedQc(19,19) = 0.0;                // virtual time scale bias noise block (1D)
+            Matrix20 expectedQc = Matrix20::Identity();
+            expectedQc.block<3,3>(6,6).setZero();  // virtual velocity noise block (3D)
+            expectedQc(9,9) = 0.0;                 // virtual time scale noise block (1D)
+            expectedQc.block<3,3>(16,16).setZero(); // virtual velocity bias noise block (3D)
+            expectedQc(19,19) = 0.0;                // virtual time scale bias noise block (1D)
 
 
-//             Matrix20 zeroMat20 = Matrix20::Zero();
-//             Matrix20 identMat20 = Matrix20::Identity();
-//             EXPECT(assert_equal(zeroMat20, pim.uncertaintyCovariance(), kTolerance));
-//             EXPECT(assert_equal(identMat20, pim.biasJacobian(), kTolerance));
-//             EXPECT(assert_equal(Gal3::Identity(), pim.deltaUpsilon(), kTolerance));
+            Matrix20 zeroMat20 = Matrix20::Zero();
+            Matrix20 identMat20 = Matrix20::Identity();
+            EXPECT(assert_equal(zeroMat20, pim.uncertaintyCovariance(), kTolerance));
+            EXPECT(assert_equal(identMat20, pim.biasJacobian(), kTolerance));
+            EXPECT(assert_equal(Gal3::Identity(), pim.deltaUpsilon(), kTolerance));
 
-//             Vector6 zeroBias = Vector6::Zero();
-//             EXPECT(assert_equal(zeroBias, pim.biasHat().vector(), kTolerance));
+            Vector6 zeroBias = Vector6::Zero();
+            EXPECT(assert_equal(zeroBias, pim.biasHat().vector(), kTolerance));
 
-//             EXPECT(assert_equal(Rot3::Identity(), pim.deltaRij(), kTolerance));
-//             EXPECT(assert_equal(kZero, pim.deltaVij(), kTolerance));
-//             EXPECT(assert_equal(kZero, pim.deltaPij(), kTolerance));
-//             DOUBLES_EQUAL(0.0, pim.deltaTij(), kTolerance);
+            EXPECT(assert_equal(Rot3::Identity(), pim.deltaRij(), kTolerance));
+            EXPECT(assert_equal(kZero, pim.deltaVij(), kTolerance));
+            EXPECT(assert_equal(kZero, pim.deltaPij(), kTolerance));
+            DOUBLES_EQUAL(0.0, pim.deltaTij(), kTolerance);
 
-//             auto galileanParams = std::static_pointer_cast<const GalileanPreintegrationParams>(pim.params());
-//             EXPECT(galileanParams != nullptr);
-//             EXPECT(assert_equal(Vector3(0, 0, -9.81), galileanParams->n_gravity, kTolerance));
-//             DOUBLES_EQUAL(1.0, sqrt(galileanParams->gyroscopeCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1.0, sqrt(galileanParams->accelerometerCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(0.0, galileanParams->virtualVelCovariance.trace(), kTolerance);
-//             DOUBLES_EQUAL(0.0, galileanParams->virtualTimeScaleCovariance, kTolerance);
-//             DOUBLES_EQUAL(1.0, sqrt(galileanParams->biasOmegaCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1.0, sqrt(galileanParams->biasAccCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(0.0, galileanParams->biasVirtualVelCovariance.trace(), kTolerance);
-//             DOUBLES_EQUAL(0.0, galileanParams->biasVirtualTimeCovariance, kTolerance);
+            auto galileanParams = std::static_pointer_cast<const GalileanPreintegrationParams>(pim.params());
+            EXPECT(galileanParams != nullptr);
+            EXPECT(assert_equal(Vector3(0, 0, -9.81), galileanParams->n_gravity, kTolerance));
+            DOUBLES_EQUAL(1.0, sqrt(galileanParams->gyroscopeCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1.0, sqrt(galileanParams->accelerometerCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(0.0, galileanParams->virtualVelCovariance.trace(), kTolerance);
+            DOUBLES_EQUAL(0.0, galileanParams->virtualTimeScaleCovariance, kTolerance);
+            DOUBLES_EQUAL(1.0, sqrt(galileanParams->biasOmegaCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1.0, sqrt(galileanParams->biasAccCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(0.0, galileanParams->biasVirtualVelCovariance.trace(), kTolerance);
+            DOUBLES_EQUAL(0.0, galileanParams->biasVirtualTimeCovariance, kTolerance);
 
-//             Matrix10 zeroMat10 = Matrix10::Zero();
-//             EXPECT(assert_equal(zeroMat10, galileanParams->getBiasExtendedInit(), kTolerance));
+            Matrix10 zeroMat10 = Matrix10::Zero();
+            EXPECT(assert_equal(zeroMat10, galileanParams->getBiasExtendedInit(), kTolerance));
 
-//             EXPECT(assert_equal(expectedQc, galileanParams->createNoiseCovariance(), kTolerance));
-//         }
+            EXPECT(assert_equal(expectedQc, galileanParams->createNoiseCovariance(), kTolerance));
+        }
 
-//         {
-//             // Test constructor with custom parameters
-//             auto p = createParams(Vector3(0, 0, -9.81), 1e-4, 1e-3, 1e-8, 1e-10, 1e-6, 1e-5, 1e-7, 1e-8);
-//             PreintegratedGalileanMeasurements pim(p);
+        {
+            // Test constructor with custom parameters
+            auto p = createParams(Vector3(0, 0, -9.81), 1e-4, 1e-3, 1e-8, 1e-10, 1e-6, 1e-5, 1e-7, 1e-8);
+            PreintegratedGalileanMeasurements pim(p);
 
-//             Matrix20 expectedQc = Matrix20::Zero(); // Initialize with zeros
-//             expectedQc.block<3,3>(0,0) = Matrix3::Identity() * (1e-4 * 1e-4);   // gyro noise
-//             expectedQc.block<3,3>(3,3) = Matrix3::Identity() * (1e-3 * 1e-3);   // acc noise
-//             expectedQc.block<3,3>(6,6) = Matrix3::Identity() * (1e-8 * 1e-8);   // virtual vel noise
-//             expectedQc(9,9) = (1e-10 * 1e-10);                                 // virtual time noise
-//             expectedQc.block<3,3>(10,10) = Matrix3::Identity() * (1e-6 * 1e-6); // gyro bias noise
-//             expectedQc.block<3,3>(13,13) = Matrix3::Identity() * (1e-5 * 1e-5); // acc bias noise
-//             expectedQc.block<3,3>(16,16) = Matrix3::Identity() * (1e-7 * 1e-7); // virtual vel bias noise
-//             expectedQc(19,19) = (1e-8 * 1e-8);                                 // virtual time bias noise
+            Matrix20 expectedQc = Matrix20::Zero(); // Initialize with zeros
+            expectedQc.block<3,3>(0,0) = Matrix3::Identity() * (1e-4 * 1e-4);   // gyro noise
+            expectedQc.block<3,3>(3,3) = Matrix3::Identity() * (1e-3 * 1e-3);   // acc noise
+            expectedQc.block<3,3>(6,6) = Matrix3::Identity() * (1e-8 * 1e-8);   // virtual vel noise
+            expectedQc(9,9) = (1e-10 * 1e-10);                                 // virtual time noise
+            expectedQc.block<3,3>(10,10) = Matrix3::Identity() * (1e-6 * 1e-6); // gyro bias noise
+            expectedQc.block<3,3>(13,13) = Matrix3::Identity() * (1e-5 * 1e-5); // acc bias noise
+            expectedQc.block<3,3>(16,16) = Matrix3::Identity() * (1e-7 * 1e-7); // virtual vel bias noise
+            expectedQc(19,19) = (1e-8 * 1e-8);                                 // virtual time bias noise
 
-//             auto galileanParams = std::static_pointer_cast<const GalileanPreintegrationParams>(pim.params());
-//             EXPECT(assert_equal(Vector3(0, 0, -9.81), galileanParams->n_gravity, kTolerance));
-//             DOUBLES_EQUAL(1e-4, sqrt(galileanParams->gyroscopeCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-3, sqrt(galileanParams->accelerometerCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-8, sqrt(galileanParams->virtualVelCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-10, sqrt(galileanParams->virtualTimeScaleCovariance), kTolerance);
-//             DOUBLES_EQUAL(1e-6, sqrt(galileanParams->biasOmegaCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-5, sqrt(galileanParams->biasAccCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-7, sqrt(galileanParams->biasVirtualVelCovariance(0,0)), kTolerance);
-//             DOUBLES_EQUAL(1e-8, sqrt(galileanParams->biasVirtualTimeCovariance), kTolerance);
+            auto galileanParams = std::static_pointer_cast<const GalileanPreintegrationParams>(pim.params());
+            EXPECT(assert_equal(Vector3(0, 0, -9.81), galileanParams->n_gravity, kTolerance));
+            DOUBLES_EQUAL(1e-4, sqrt(galileanParams->gyroscopeCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-3, sqrt(galileanParams->accelerometerCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-8, sqrt(galileanParams->virtualVelCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-10, sqrt(galileanParams->virtualTimeScaleCovariance), kTolerance);
+            DOUBLES_EQUAL(1e-6, sqrt(galileanParams->biasOmegaCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-5, sqrt(galileanParams->biasAccCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-7, sqrt(galileanParams->biasVirtualVelCovariance(0,0)), kTolerance);
+            DOUBLES_EQUAL(1e-8, sqrt(galileanParams->biasVirtualTimeCovariance), kTolerance);
 
-//             Matrix10 zeroMat10 = Matrix10::Zero();
-//             EXPECT(assert_equal(zeroMat10, galileanParams->getBiasExtendedInit(), kTolerance));
+            Matrix10 zeroMat10 = Matrix10::Zero();
+            EXPECT(assert_equal(zeroMat10, galileanParams->getBiasExtendedInit(), kTolerance));
 
-//             EXPECT(assert_equal(expectedQc, galileanParams->createNoiseCovariance(), kTolerance));
-//         }
-//     }
-// }
+            EXPECT(assert_equal(expectedQc, galileanParams->createNoiseCovariance(), kTolerance));
+        }
+    }
+}
 
 // /* ************************************************************************* */
 // // Test Case 2: Mean Propagation
@@ -222,6 +261,251 @@ TEST(GalPreintegration, MeanPropagation) {
 }
 
 
+
+
+/* ************************************************************************* */
+// Test Case 4: Mean Propagation 2
+/* ************************************************************************* */
+TEST(GalPreintegration, MeanPropagation2) {
+    // Hardcoded test inputs from reference test output
+    size_t n = 100;
+    double dt = 0.01;
+
+    // Hardcoded accelerations
+    vector<Vector3> accs = {
+        Vector3(-8.8170036932743461, -8.1979156949859533, -1.0482778927427883),
+        Vector3(8.6744979914268239, -2.7582557743037164, 7.3029036355569481),
+        Vector3(5.8514302420365709, 0.56493654317219644, 3.2727682047509687),
+        Vector3(-2.0735052920769159, -4.9749567245868178, -8.5856008627254923),
+        Vector3(-2.1821431812248218, 0.31482913319945016, 7.7367355168002643),
+        Vector3(-9.8934986495139494, -2.7929591873666313, -6.7414714239462903),
+        Vector3(2.9784354072880292, -4.2744677652483052, -6.8374849488149421),
+        Vector3(-4.1994656379664015, 3.7784082860912638, 6.896342316348516),
+        Vector3(-4.2969899610548721, 9.3630482962827806, -0.86577206181231658),
+        Vector3(8.0921010413409604, 2.8816114779753188, 2.6655964126712273),
+        Vector3(5.8964176549103904, -5.8740257226160377, 9.8875943817526384),
+        Vector3(2.0125248334755907, -4.3978520675762347, 6.8720323080511747),
+        Vector3(-5.1932064109770817, -3.712411129824579, -0.25879075134814911),
+        Vector3(-2.5942141287623413, -5.4847932864687223, -6.7290114626593587),
+        Vector3(0.028964676475122797, 4.2817163223668953, -9.4682338771606727),
+        Vector3(-2.3860919789726056, 4.918795710838979, 0.79567421423767604),
+        Vector3(-5.9398904306292248, -9.1387799735007267, -5.08181871542791),
+        Vector3(1.0819312714686413, 6.6572002351387694, 5.2866641601168833),
+        Vector3(-6.0740953766605053, -0.71467928237713307, 0.65013100570119775),
+        Vector3(-6.5325102867225908, 6.435686053747478, 1.8938309384327212),
+        Vector3(5.5042588540362551, 7.7563401104918057, 9.6910955975392419),
+        Vector3(-2.2207539360152384, 9.0519254563678935, -1.4561626623272683),
+        Vector3(3.7966467990711106, 7.6715929885540968, -9.0504195862867309),
+        Vector3(7.773834100692234, -1.9935277128598827, -4.3423712225810442),
+        Vector3(1.5218179867466097, -2.4480889558364636, -4.8392097733468278),
+        Vector3(-7.5875975002077567, 0.29888907587405367, 2.6789005775169072),
+        Vector3(1.6379680221113091, -6.936238121133826, 8.7047573309877144),
+        Vector3(2.7147552255481489, 9.3298027478571655, 5.557592120927235),
+        Vector3(0.00070044587473505615, 6.5701650134955214, 6.8591142847445807),
+        Vector3(-2.9363880025608644, 2.4496431230636828, -5.3661858027027067),
+        Vector3(-6.4875921686017177, 7.3711701161022036, -4.338592576964496),
+        Vector3(-3.8576276850692439, 7.65041880938234, -5.6287178258425872),
+        Vector3(2.0354743814409026, -6.0451333378665364, 0.41939263461805876),
+        Vector3(-8.6863755600364119, 9.0454890676313671, 2.1257113362995095),
+        Vector3(-8.3255328671917805, -4.9752741833898746, -0.14071552652227703),
+        Vector3(-0.50848841530707123, -8.6844560692650976, -2.0757245243221845),
+        Vector3(0.95565239274698843, 3.5443127627965754, -3.9440750697574201),
+        Vector3(-6.2608795686050396, -3.552250688792796, -9.2109572676388733),
+        Vector3(0.28912617307835564, 1.429189883013382, -0.56618672408646598),
+        Vector3(-6.4090709242706341, 0.94618293798383268, -4.5649698160770225),
+        Vector3(2.3381918368680665, 8.9530144508234493, -1.5275112796436163),
+        Vector3(-0.11815106317577428, 1.667310277297227, -7.8294290903067445),
+        Vector3(-6.1998609872819452, -1.9162778513279632, -7.5319729082949758),
+        Vector3(-4.0522226751943959, 3.0469383481518264, -7.9962035625507148),
+        Vector3(0.10608365380344154, -3.4319103379114657, -7.4170614979299039),
+        Vector3(-2.1428642581539026, 8.145797157572602, -9.3097175500695002),
+        Vector3(1.7905858826807974, 7.2931752458022299, -0.22189764183959571),
+        Vector3(6.2431107610047505, 8.6704563093542895, -7.6797198815693823),
+        Vector3(8.1127450290669287, -1.2801227755082145, -0.71726976281781929),
+        Vector3(8.2729998905666555, -1.3988655101216818, 5.668183366204631),
+        Vector3(-0.28133786489862311, 6.9951414861931198, 0.94347366615053607),
+        Vector3(-5.3908058487647352, 5.7174114791996811, -4.5495360160791956),
+        Vector3(3.8710193654140679, 2.8946308377088359, 8.4735959579092928),
+        Vector3(6.669844311173696, -7.9738493757020645, 7.1357425995028816),
+        Vector3(-7.0236775713927866, -2.7330067961385671, 1.1912052885521374),
+        Vector3(-7.7477622484558077, 5.3040093236183772, 1.0650485064050397),
+        Vector3(-7.1954114055254301, -4.530283945439459, 3.5641016604309406),
+        Vector3(3.2783232534192952, 8.0355702518658596, -2.8450178907101611),
+        Vector3(-5.282896576795622, 6.5132732409368082, -0.18696574822531287),
+        Vector3(5.5759501898182791, -7.7747635962463963, 8.7723910764025348),
+        Vector3(1.9899728076049783, -1.2493395670288743, -4.517799128900954),
+        Vector3(-5.8895256719836038, 0.017507939972851716, -6.2599352624343583),
+        Vector3(-2.2085679249407573, -6.8415343625994005, 2.0100002309152654),
+        Vector3(-7.5362918507189232, -7.8025537547686579, -3.1937537767462354),
+        Vector3(-6.9291366068495437, -3.0111454524778236, 8.7102192368693228),
+        Vector3(5.6835335381159542, 9.7133438523164539, -0.98209993127152728),
+        Vector3(4.4447424127659518, -8.9245359556721713, 7.8257494647483998),
+        Vector3(2.2143137623694931, -0.44973107421567238, 1.552569646791242),
+        Vector3(7.4928282563763631, -4.6396757275983589, 4.9142406352283547),
+        Vector3(-7.6600626290412528, -7.4950661648215364, 4.7640343984054141),
+        Vector3(4.1723413235938667, 6.1982254987164831, -6.3276131701773881),
+        Vector3(2.1995663389235842, -1.6817837538250069, 8.5305507783296619),
+        Vector3(-6.2250319955397622, 2.3414764050516523, -6.0493272604597816),
+        Vector3(-1.5580763916535445, 9.4290769713048341, -5.5603104230679348),
+        Vector3(4.7836911068974164, 8.8470539640679569, -9.9276848201371681),
+        Vector3(8.7567244887242275, 2.6292454507662799, -5.444290527591539),
+        Vector3(3.2975955103914134, -8.3112384635120264, -2.8960683151336974),
+        Vector3(2.2763569400855621, 2.9031210347946779, -3.8836299143751263),
+        Vector3(-4.6887713702813683, -5.2927505625325768, 2.1569339887388561),
+        Vector3(6.4364667569843848, 1.324379627550476, 0.23473224680675253),
+        Vector3(1.3044748848267584, -9.9262326436221127, -2.6060804509042534),
+        Vector3(-3.4632409378877425, 1.9775183657634932, 9.6463895875660537),
+        Vector3(-7.5924244731056936, -7.3222128909476449, -1.1326270482747192),
+        Vector3(6.0392965672255094, -5.8260320486458426, -5.2159808522266431),
+        Vector3(6.8977304813149392, 3.8440915295325939, 4.6054039469816992),
+        Vector3(-6.2220121695824071, -4.0300471948996215, 5.978111361646798),
+        Vector3(8.7836755925813907, 7.594290470141738, 0.39880694990976684),
+        Vector3(5.4577214317238321, 1.0534721403095904, -4.4656672014284293),
+        Vector3(2.4553400011939286, 5.4818289134395437, 6.7688605294714455),
+        Vector3(-8.6556032599818877, -5.3828701564231842, -9.1503992276727768),
+        Vector3(-7.9043176916525022, -9.0519990949393065, 1.0929877265316978),
+        Vector3(4.0725509000636828, 2.888309359160568, -1.4828768330424391),
+        Vector3(7.1703423335675893, 1.9243370300873819, -8.997652653946119),
+        Vector3(-3.4337247530467319, 1.3967132082463762, -1.2686619361210272),
+        Vector3(-4.3199068186289633, -2.1265051864252404, 1.6518633538495719),
+        Vector3(-6.2404864646670486, 3.7329092433913003, 4.5711590422530168),
+        Vector3(5.1067961370067412, 2.0592924619128494, -3.5505090725428898),
+        Vector3(3.1062863018572506, -0.93891164364925284, 7.6074961680906856),
+        Vector3(-4.9847417342246594, -8.2697929271082682, -1.382654096179986),
+        Vector3(6.7840614147175522, 1.4938513567782041, -1.9745655715634103)
+    };
+
+    // Hardcoded gyroscope readings
+    vector<Vector3> gyros = {
+        Vector3(0.57248787244706656, 0.80821004848812139, 0.1645136674161336),
+        Vector3(0.18922351522866765, -0.34223045099889726, 0.16674810009701235),
+        Vector3(0.70979598082240924, 0.91476807536500115, -0.34034924494592578),
+        Vector3(-0.75722146379380484, -0.1668228812038911, 0.15254222481845514),
+        Vector3(-0.12186780083718951, 0.35415042586972234, -0.18839982450757198),
+        Vector3(0.23464247728378429, -0.52371355417637955, -0.95593521862461406),
+        Vector3(0.096804955385067615, 0.67635925887361159, 0.90590035201097363),
+        Vector3(-0.67763123712336215, 0.15120456138786809, -0.65030973780338153),
+        Vector3(-0.78668274245522751, -0.9637358548782915, 0.70107000786723517),
+        Vector3(-0.62187547997820225, -0.18431897529107988, -0.59489481723144499),
+        Vector3(0.052995635907297389, -0.15385960931027942, 0.76829987575120651),
+        Vector3(-0.29703113795066827, 0.55334681804740549, 0.22673603819841981),
+        Vector3(-0.92529424816791883, 0.83598640258199475, 0.93615068299893189),
+        Vector3(-0.27996978395062888, -0.82219828003707707, -0.65571089703497432),
+        Vector3(0.03395142389271899, -0.13751867617505564, 0.4164656259943853),
+        Vector3(-0.51969574424314802, 0.85826617256049942, -0.18066984183370127),
+        Vector3(-0.3555431932909997, -0.44763276596119761, 0.74649066685667731),
+        Vector3(-0.51199739897964192, 0.25774754965404356, 0.61252121305091234),
+        Vector3(-0.70768869911824817, -0.11542586975602787, 0.85283221937627807),
+        Vector3(0.0445109596651454, 0.69799435014072309, -0.36572200329611781),
+        Vector3(-0.065442731890016592, -0.14312901333622152, -0.64778288011094731),
+        Vector3(-0.25685686378335604, -0.50684544753325966, 0.2007349537222296),
+        Vector3(-0.54833796140588631, 0.18279713465308811, -0.033530585533210089),
+        Vector3(0.77258224208065429, -0.36587148890093824, -0.029413625162553414),
+        Vector3(0.28412403250651019, -0.3734315097045402, 0.281623878530598),
+        Vector3(0.63409277832454869, -0.19676623809538518, -0.74026990189818953),
+        Vector3(0.33244328917606292, 0.094662055801967293, 0.0089027930256990739),
+        Vector3(-0.72400485453830576, -0.065039239196973186, -0.28454481495267492),
+        Vector3(-0.0017417525146028456, -0.45238657201576427, 0.73312881066658586),
+        Vector3(0.98992381803863672, -0.45200348449781003, 0.28697329344000733),
+        Vector3(-0.82585841061173948, 0.2189299766527868, -0.53625570174268655),
+        Vector3(0.69892964516681433, 0.61352846918750337, 0.40676756086736665),
+        Vector3(0.51250020059134838, 0.51922834112559424, -0.96623933581752308),
+        Vector3(0.33279805200628676, -0.6482975729389342, 0.85839393282367848),
+        Vector3(0.89876366960375753, 0.10637096257693179, 0.3197020687717409),
+        Vector3(0.72314093031713056, 0.065043987019571592, 0.90583297299378551),
+        Vector3(-0.69773200155936355, -0.097932613965483473, 0.5337296964287872),
+        Vector3(0.62480345022896788, 0.09474363096761973, -0.1889680441235968),
+        Vector3(0.29585082748962011, -0.97830752509725227, -0.13393189517798965),
+        Vector3(0.79053425441620018, -0.4222675014057965, 0.48215107454003236),
+        Vector3(0.077831135932732831, 0.21940847115315054, 0.20001287006692237),
+        Vector3(-0.1536218391175237, 0.085003015846079499, -0.9115486298072708),
+        Vector3(0.5670283416233628, 0.61829585358712635, -0.5293620160092003),
+        Vector3(-0.94608049087097312, -0.095532503699751636, 0.69637961256720571),
+        Vector3(-0.10411167095866747, 0.0749284530067309, 0.092163860711575341),
+        Vector3(0.82461333701485962, -0.72295155193620653, -0.88099725732838174),
+        Vector3(0.30415628810338968, 0.87175630189974207, -0.95350286923528682),
+        Vector3(-0.0028488595789450954, -0.35612524074515883, 0.09887356274995307),
+        Vector3(0.40506546980087399, 0.59698448846067542, 0.011210377246855474),
+        Vector3(-0.71370653061656197, 0.5788132180007306, -0.89279161639984972),
+        Vector3(0.30826761759157573, -0.128785675986266, 0.72098412022208969),
+        Vector3(0.0038962534804682925, 0.42776489927147554, 0.67130175409570403),
+        Vector3(0.23902420734160357, -0.72322509650419053, 0.30435879263642751),
+        Vector3(-0.92481500057430943, 0.79938538614946641, -0.95779110438277881),
+        Vector3(0.43577529422866812, -0.72025855088771618, 0.47818216316936524),
+        Vector3(0.31525737208110804, -0.85659731160677355, 0.95191708394114949),
+        Vector3(0.54525343295246942, -0.30361235829849598, -0.79276564095242774),
+        Vector3(-0.94396034269797036, -0.70692203551064792, 0.50062055068760802),
+        Vector3(0.96638406371787999, 0.16750813253430685, 0.49993156774817771),
+        Vector3(0.73688306108399071, -0.70682630762550536, -0.65015691824224175),
+        Vector3(-0.59534372690401638, -0.03136555069507041, -0.33751394215912545),
+        Vector3(0.458992248003943, -0.65070790439222836, -0.88750364383526981),
+        Vector3(-0.31000174224361643, -0.36981535098696461, -0.68732772715440571),
+        Vector3(-0.57621164863596719, -0.38975187768030006, 0.95403990717514864),
+        Vector3(0.82772491068152365, -0.6726392885924144, 0.91986824769149367),
+        Vector3(0.93157176897672134, -0.9169356145424632, 0.56745586752082988),
+        Vector3(0.36898868919334915, 0.73056373625532389, -0.53603999749782472),
+        Vector3(0.44940515046183527, -0.45820155304053189, 0.86671200574838902),
+        Vector3(0.78970535364550387, 0.28269264956026463, 0.44587726463019806),
+        Vector3(-0.8303664226818851, -0.19371248498446159, -0.84649559298798627),
+        Vector3(-0.73966043990303976, 0.43542440693852047, 0.063661093844662897),
+        Vector3(0.082896259461093136, 0.97550986582556121, 0.24572689377954182),
+        Vector3(-0.64064999186224547, 0.42040712805029168, 0.73682942602171164),
+        Vector3(-0.46542900341059068, -0.7972236175310502, 0.46034451478464455),
+        Vector3(0.15940216026147702, 0.71165037163185918, 0.45945767473689836),
+        Vector3(-0.25221388301779002, 0.76434700261293176, 0.93143577583123283),
+        Vector3(0.91674917742266948, -0.87533785023244981, -0.78523683946737555),
+        Vector3(-0.74956606109924939, 0.74057605656476233, 0.20083105603835838),
+        Vector3(0.58671426127668691, 0.69953532308863497, -0.20354756812812025),
+        Vector3(0.76364168886536432, 0.94825733732736728, 0.15240913937862244),
+        Vector3(0.087371675513877589, 0.81686622376306017, -0.66789204564696925),
+        Vector3(-0.21052615241290218, -0.79045988254356747, -0.31371421750712603),
+        Vector3(0.9316158714342897, 0.225496191975878, 0.40231250455620438),
+        Vector3(-0.80311404413913545, -0.52765692409339005, -0.52301341127458056),
+        Vector3(-0.52697822567144814, 0.56912336737265679, -0.87316859633835509),
+        Vector3(0.92547598487062732, 0.86149730044209938, -0.83343909453063636),
+        Vector3(-0.56169452110429485, 0.28259688113243064, -0.78547525311720245),
+        Vector3(-0.65569143564568888, -0.80426380712659118, -0.33536178697088026),
+        Vector3(-0.9893415586582035, 0.42261182280879983, -0.49298360084805115),
+        Vector3(-0.047590041294627072, -0.37748195504178872, -0.43665903738856149),
+        Vector3(-0.83487908610525341, -0.84391908190824538, -0.97631670353488842),
+        Vector3(0.40324469196666946, -0.42610675496784067, 0.81323971589139998),
+        Vector3(-0.67602272990106438, 0.48030049061860369, 0.086056094214035594),
+        Vector3(0.082871775705786632, -0.93265495872598458, 0.17491582758480728),
+        Vector3(-0.92806792978128683, 0.42852716868686591, 0.79795257397088948),
+        Vector3(0.66905874223679351, -0.76070106239422186, 0.63633123906315681),
+        Vector3(-0.97011786936751321, 0.78163917479368972, 0.91897075708247677),
+        Vector3(0.57553419616983859, 0.88608312632906605, -0.20367250220367894),
+        Vector3(0.92481162778830672, 0.61844692108425403, 0.7456651270507122),
+        Vector3(-0.93492558273249848, -0.36614009231272993, -0.87663182866502043)
+    };
+
+    auto p = createParams(Vector3(0, 0, -9.81), 1e-4, 1e-3, 0, 0, 1e-6, 1e-5, 0, 0);
+    PreintegratedGalileanMeasurements pim(p);
+
+    // Hardcoded expected values from test output
+    Matrix3 expectedDeltaRij;
+    expectedDeltaRij << 0.99955463650841625, -0.029155249315777301, 0.0063639666767622742,
+                       0.029129816922076637, 0.99956741953199724, 0.0040530946484545203,
+                       -0.0064793827340550291, -0.0038659083638778935, 0.99997153577084719;
+
+    Vector3 expectedDeltaVij(-0.37537578061928645, 0.35148808689040728, -0.48233400026373896);
+    Vector3 expectedDeltaPij(-0.36583073072761352, 0.28697300916833801, -0.23176729252089109);
+    double expectedDeltaTij = 1.0000000000000007;
+
+    // Integrate measurements using hardcoded values
+    for (size_t j = 0; j < n; ++j) {
+        pim.integrateMeasurement(accs[j], gyros[j], dt);
+    }
+
+    // Compare with hardcoded expected values
+    EXPECT(assert_equal(Rot3(expectedDeltaRij), pim.deltaRij(), 1e-10));
+    EXPECT(assert_equal(expectedDeltaVij, pim.deltaVij(), 1e-10));
+    EXPECT(assert_equal(expectedDeltaPij, pim.deltaPij(), 1e-10));
+    DOUBLES_EQUAL(expectedDeltaTij, pim.deltaTij(), 1e-10);
+}
+
+
+
 /* ************************************************************************* */
 // Test Case 3: Covariance Propagation
 TEST(GalPreintegration, CovariancePropagation) {
@@ -244,8 +528,8 @@ TEST(GalPreintegration, CovariancePropagation) {
     PreintegratedGalileanMeasurements pim(p);
 
     // Expected Covariance Matrix (pim.Cov()) from log: PreintegrationTest/1.CovariancePropagation "Final values"
-    Matrix20 expectedCov;
-    expectedCov <<
+    Matrix20 expectedCov_lieplusplus;
+    expectedCov_lieplusplus <<
         1.99998691557941965e-10,  6.99755856359394903e-16,  7.08338594247838921e-16, -7.50353044646448299e-15, -1.01468955611150615e-11,  9.85772055529551783e-12,  1.10522991549942812e-16,  7.18363104560932057e-14, -6.19686782721880474e-14, 0,  9.99975038629791217e-17, -4.37806744383901684e-19,  4.27479901886116107e-19, -4.38327399087170224e-20, -6.06083707156799795e-18,  4.04624690931843161e-18,  2.26414894319069661e-22,  4.32810108760194263e-20, -8.63714478211074088e-21, 0,
         6.99755856359434543e-16,  1.99998518619023369e-10,  5.94846951901707230e-16,  1.01550792471161753e-11, -1.10274045157363615e-14, -1.64081076595844354e-12, -7.19597252094407741e-14,  1.55797106617578358e-16,  3.81208172443093615e-14, 0,  4.40584506106874588e-19,  9.99971199998084041e-17, -4.87725781897906804e-19,  6.11003029672390411e-18, -6.06396186519586332e-20, -6.91331618636512549e-18, -4.38168405116757192e-20,  7.59183495119013668e-22,  1.16071661840381752e-19, 0,
         7.08338594247824031e-16,  5.94846951901753083e-16,  1.99998577151053578e-10, -9.84807337354357767e-12,  1.64841180665844070e-12, -7.87019564802512613e-15,  6.18205426400439984e-14, -3.82313995399668572e-14,  1.24858556238825056e-16, 0, -4.24616420929709853e-19,  4.90220766513753688e-19,  9.99971958403891122e-17, -3.98603175831381559e-18,  6.95687709179388486e-18, -5.10308325800817169e-20,  7.91416766463152484e-21, -1.16293455548280195e-19,  6.03716453851008549e-22, 0,
@@ -269,8 +553,8 @@ TEST(GalPreintegration, CovariancePropagation) {
     ;
 
     // Expected Jacobian Matrix (pim.Jxi()) from log: PreintegrationTest/1.CovariancePropagation "Final values"
-    Matrix20 expectedJxi;
-    expectedJxi <<
+    Matrix20 expectedJxi_lieplusplus;
+    expectedJxi_lieplusplus <<
         1.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00, 0, -1.99996700120077114e-02, -7.73123223153156399e-05,  1.90293501523185410e-05, 0,0,0,0,0,0,0,
         0.00000000000000000e+00,  1.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00, 0,  7.71198304956659356e-05, -1.99996008883846221e-02, -4.28154941602819039e-05, 0,0,0,0,0,0,0,
         0.00000000000000000e+00,  0.00000000000000000e+00,  1.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00,  0.00000000000000000e+00, 0, -1.93937055642201563e-05,  4.25857963521619206e-05, -1.99997889705466822e-02, 0,0,0,0,0,0,0,
@@ -292,13 +576,474 @@ TEST(GalPreintegration, CovariancePropagation) {
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1;
 
+    Matrix20 expectedCov_gtsam = convertLieplusplusToGTSAMOrdering20(expectedCov_lieplusplus);
+    Matrix20 expectedJxi_gtsam = convertLieplusplusToGTSAMOrdering20(expectedJxi_lieplusplus);
+
     for (size_t j = 0; j < n; ++j) {
         pim.integrateMeasurement(accs[j], gyros[j], dt);
     }
 
-    EXPECT(assert_equal(expectedCov, pim.uncertaintyCovariance(), 1e-10));
-    EXPECT(assert_equal(expectedJxi, pim.biasJacobian(), 1e-10));
+    EXPECT(assert_equal(expectedCov_gtsam, pim.uncertaintyCovariance(), 1e-10));
+    EXPECT(assert_equal(expectedJxi_gtsam, pim.biasJacobian(), 1e-10));
+
+    // interim debug step. If issue is only ordering, then these test will pass
+    std::vector<double> expectedSorted = flattenAndSort(expectedCov_lieplusplus);
+    std::vector<double> actualSorted = flattenAndSort(pim.uncertaintyCovariance());
+
+    for (size_t i = 0; i < expectedSorted.size(); ++i) {
+        EXPECT(assert_equal(expectedSorted[i], actualSorted[i], 1e-10));
+    }
+
+    std::vector<double> expectedSorted2 = flattenAndSort(expectedJxi_lieplusplus);
+    std::vector<double> actualSorted2 = flattenAndSort(pim.biasJacobian());
+
+    for (size_t i = 0; i < expectedSorted2.size(); ++i) {
+        EXPECT(assert_equal(expectedSorted2[i], actualSorted2[i], 1e-10));
+    }
+
 }
+
+
+/* ************************************************************************* */
+// Test Case 3: Covariance Propagation
+TEST(GalPreintegration, CovariancePropagation2) {
+    // Hardcoded test inputs from reference test output
+    size_t n = 100;
+    double dt = 0.01;
+
+    // Hardcoded accelerations
+    vector<Vector3> accs = {
+        Vector3(-3.2683038668374866, -6.2589175776722978, 1.1697445250921179),
+        Vector3(6.2051587945486242, -6.2870845916330333, 4.7372255783092658),
+        Vector3(-2.5383016625312669, -7.0701289796305673, -2.3292297554542349),
+        Vector3(-3.6319938670809848, -3.4511847048930475, -5.922769722688197),
+        Vector3(-2.9781345011260441, 8.7691705372220561, -0.77747704026693287),
+        Vector3(-9.6392923355602704, -9.1539805253152142, 9.3283269234742399),
+        Vector3(4.8128102439743063, -0.27589753567082376, 6.2528868144966605),
+        Vector3(-3.4174316402231941, 1.4501781890274068, -2.0201611596209332),
+        Vector3(-7.2809677879985486, -6.1080401395667634, -7.9190257698256143),
+        Vector3(-5.7591646948793667, -2.2660279903562888, 2.2407666997612408),
+        Vector3(8.4313808942658426, 3.6005695300300888, 0.24782459356367692),
+        Vector3(-2.3981241454002489, -8.1923030509925834, 8.4057157021245139),
+        Vector3(1.4529084655530111, 9.5850875781738871, -3.712972503656049),
+        Vector3(4.7072792088755104, 8.1332338146146554, 9.7770227837524324),
+        Vector3(5.5597802336854336, -1.3184673984048745, 3.8599036243450047),
+        Vector3(-1.7066373527156375, 6.6664844524254203, -9.7586079689620835),
+        Vector3(-7.1891089689120129, 0.73104442673970427, -5.7563007636539147),
+        Vector3(6.3929920127537816, -9.9060682591996869, -4.4326442380418349),
+        Vector3(-5.2891936975675886, 5.4314312367991295, 9.6865017005252412),
+        Vector3(-3.5906162263011918, 4.2400508436826501, 3.1626537484581552),
+        Vector3(-0.42701761428074803, 2.3772979402795391, 8.6487730867419987),
+        Vector3(9.4541121453974082, 3.7437264867075903, -8.9942134928404069),
+        Vector3(2.152601303187629, 6.5565386518491149, -9.8766714515609344),
+        Vector3(8.5392524734830655, 4.6088586553820416, -6.8970373943093417),
+        Vector3(-4.2097861105880696, -2.5320991826592798, -0.37099786374767629),
+        Vector3(-7.0351903461609062, -0.87491289961083685, 3.2126873034863568),
+        Vector3(-3.5215025408115244, -7.582856054486264, -1.5475510441799334),
+        Vector3(4.7623489398297014, 0.17788516644553498, -1.1992106736501995),
+        Vector3(-5.1363835009692966, -1.6899299391166267, -8.4685591787814278),
+        Vector3(7.7835777845552112, -0.53650288217343522, -2.3234673838567343),
+        Vector3(4.7439790664644432, -9.5023686155373408, 4.8250299133161416),
+        Vector3(9.8741092887432487, -7.8972164225414057, -6.3133260073055837),
+        Vector3(2.0682665291054025, 8.1181164708592846, 6.2644242683158335),
+        Vector3(-5.2222875011131586, 6.4164874655492117, 1.4871694268377089),
+        Vector3(-7.4142825985385405, 7.4110105896959144, 7.5532338460891069),
+        Vector3(-8.5992545910802232, -5.4074896345047438, 5.4265535983978168),
+        Vector3(1.4468839659884125, -8.3006761118643642, 4.9993157580082626),
+        Vector3(9.8159085156318948, -2.7302080785561564, -6.1889824278013919),
+        Vector3(1.185183540396717, -9.011139133989758, -6.8996319195882174),
+        Vector3(-3.6066913589959038, 2.3573437393650343, 0.036102043709964615),
+        Vector3(8.4478065243760625, 1.6709386255575542, 6.5087167117654721),
+        Vector3(2.0682881914713747, 9.2237739667370722, -7.7182586028397235),
+        Vector3(3.3308300466288454, -6.6214658405222258, -0.11613438978740898),
+        Vector3(-1.3392041700593116, -3.2412673691995133, -0.88933397766347011),
+        Vector3(9.9405116488578411, 2.0750689154093149, 7.1503020924390626),
+        Vector3(7.8237782371500586, 7.1341667877499422, -4.5912050583893311),
+        Vector3(0.14038558050477823, 6.0679364752851361, -9.5049944274492706),
+        Vector3(-0.22967442547104699, -3.0434956844815177, -1.3014550209222298),
+        Vector3(8.2856583147857155, 0.5191791654582345, 9.6225511808906852),
+        Vector3(-9.8254482783525852, 7.3454386951433648, -0.63262112975033924),
+        Vector3(2.5854101525195472, -1.7089269696670029, 0.19437778782760429),
+        Vector3(-7.1498285526823251, -0.60698263343532788, 0.14788933575178964),
+        Vector3(-2.2259186686869925, -7.8565925466283808, 2.8268605838383865),
+        Vector3(1.0025672557427567, 3.7953235835504495, 8.289857346385876),
+        Vector3(-1.0231457324752136, 3.838093619366747, -7.7422492115574455),
+        Vector3(-6.750805687688441, -2.6432381557108919, -5.3040907077020174),
+        Vector3(-0.94188870013715786, 6.989615735603758, -6.0427109904072065),
+        Vector3(9.6992632502084888, -0.20209970381150022, -8.9514373111176564),
+        Vector3(0.96032221988974875, 9.7552338630804911, 8.9674896722242536),
+        Vector3(2.4791471487154815, 7.8677127080402549, -9.6652890722373002),
+        Vector3(4.3611800277239032, 8.8500917486325719, 4.1571200623455873),
+        Vector3(0.7809378424158675, -2.8472203133416798, -6.4027447035950331),
+        Vector3(8.1786472088560824, 7.8298031771713994, 7.1060633535133171),
+        Vector3(3.2073762813516127, -7.3232171189376558, -2.1585163673936569),
+        Vector3(-4.9387101179766155, -9.3294432221811494, -0.3278810908397245),
+        Vector3(5.1807930925482566, -7.3610407871370516, -3.5706871957231301),
+        Vector3(6.3361931594266663, 6.5522380864939596, 9.2933310490330268),
+        Vector3(3.9534523020971912, 1.1926283600813203, 7.2322382637454545),
+        Vector3(6.9371497340962556, 8.7625170954284908, -9.9058173848730728),
+        Vector3(-3.9100015002311883, 2.6709005773884442, -9.5298672782090161),
+        Vector3(-9.9618479571270839, -3.5677342895163857, 8.737204685726299),
+        Vector3(-3.1231384646427074, -2.1771779777674336, 5.4059733323370551),
+        Vector3(7.5544035685311517, -9.7146480881217041, -1.9513900692264952),
+        Vector3(-8.4409897878748037, -0.64520925437041576, 5.7837813038046226),
+        Vector3(2.1601522043897914, 3.8232743602636576, 5.6663800098725714),
+        Vector3(1.5132555770746459, 6.595478418142207, -0.14530428296805065),
+        Vector3(-3.3358167885252952, -2.9732844702160022, -5.9301262646120803),
+        Vector3(4.1989348096592209, 1.3264315039628016, 0.70895555959221923),
+        Vector3(-7.9109319162302834, 9.7736074252097325, -7.5220930812032849),
+        Vector3(1.2157677300087055, 4.105970610542748, 8.1735601243868317),
+        Vector3(-1.6758461410950576, -4.7140980647148254, 5.0746781626395165),
+        Vector3(-9.460095265901991, 7.027756889089078, -9.0329991352529504),
+        Vector3(1.2654771780334007, 4.0519135394864652, -8.6235296260478247),
+        Vector3(-2.103686000714232, -1.9673130617565293, -3.9405124738871891),
+        Vector3(-3.7034727884613727, 6.1737558193062476, 4.5811369669905062),
+        Vector3(9.5391694708576953, 8.1517512183335192, 1.3522180837396225),
+        Vector3(-7.6175723824484471, -8.2661587375512191, 3.0651776540332842),
+        Vector3(-9.8748680920867145, 5.6502425758375185, 9.7706447049026064),
+        Vector3(4.6776603300924435, -2.2775322697789067, 4.8437021936391762),
+        Vector3(3.6436661379374446, 6.8703959893904409, 7.4119906866771279),
+        Vector3(-5.0498284294849292, -8.3787895675663222, -2.5650511314811686),
+        Vector3(6.0437823604321199, 9.5726526490652688, -7.8555826101188195),
+        Vector3(-2.6100830403804629, 2.4414293583089419, 7.9348614965742925),
+        Vector3(-2.9306840441010564, -9.5394602722578377, 4.5361108435334501),
+        Vector3(-2.7180580699001933, -0.1785794717022815, 7.9979099336601216),
+        Vector3(-1.3703264515821445, 3.6007870699743405, 3.7500137284024748),
+        Vector3(4.9007753478186178, -5.5235140752118292, -3.2132752258033559),
+        Vector3(3.7026351217582709, 8.1247594483611074, -7.8941261890733783),
+        Vector3(3.8099869201213732, -4.0208930187571461, 3.9265830149836023),
+        Vector3(8.7549980090649555, 6.1395275937969229, -0.67635442980805038)
+    };
+
+    // Hardcoded gyroscope readings
+    vector<Vector3> gyros = {
+        Vector3(0.85397271555696941, 0.92719559884195779, 0.38520154588703903),
+        Vector3(0.6920841275349241, -0.89325455518038388, 0.20972786200717852),
+        Vector3(0.65394270995927228, 0.53636659651074337, 0.73458833566425463),
+        Vector3(0.75364617338712514, 0.50648505489793938, -0.34485030518733018),
+        Vector3(-0.31675322280553619, 0.79655526726168069, -0.69003941536981217),
+        Vector3(-0.65828366402482363, 0.2287467228547031, -0.079971868006305735),
+        Vector3(0.92770152926401139, 0.95191850061413108, 0.52106218951891292),
+        Vector3(-0.6958451625220835, -0.94835294445700458, 0.95907882903423203),
+        Vector3(-0.84943975994856025, 0.50883008883129421, -0.44736476832620509),
+        Vector3(0.58382275755797508, -0.45636517740144344, 0.32585571012460135),
+        Vector3(-0.0035962001862084314, 0.91069481677810926, -0.23058138621537294),
+        Vector3(0.16584416151106618, -0.66418808084235414, 0.18379657919528447),
+        Vector3(0.76277918730962724, 0.71721958897236582, 0.7525899282181403),
+        Vector3(0.66851342622587273, 0.41695028442639326, 0.35108149864853089),
+        Vector3(0.95700780751445746, -0.2024082731046758, 0.079532441304104307),
+        Vector3(-0.14657512574052323, 0.19208225933033085, -0.36917079678641562),
+        Vector3(-0.83321332799640035, -0.81472401413294038, -0.32323507083914482),
+        Vector3(0.63518199580103274, 0.25777025250536267, -0.2875181303745884),
+        Vector3(-0.58324690659015066, -0.4826206374851556, -0.5704460266381095),
+        Vector3(0.21678156908912927, 0.43165249249470361, 0.94593737403580591),
+        Vector3(0.85513428403115088, -0.68170888714519273, -0.9422286946277223),
+        Vector3(0.58178295273564529, 0.53030740072072957, -0.40478205980275295),
+        Vector3(0.56119202729690332, -0.48593752733219309, -0.15643525712371631),
+        Vector3(-0.47782867212886537, 0.72069306486171381, 0.30022778619908963),
+        Vector3(0.17004948224136207, 0.83108850142132762, -0.60922264556485906),
+        Vector3(-0.10839218865777067, -0.053005374943835282, -0.14482549716194748),
+        Vector3(0.80316985698389409, -0.524475127444892, -0.77080924571029941),
+        Vector3(-0.9263570064017107, -0.96133374099462465, -0.30799215271740865),
+        Vector3(-0.55201090473795678, 0.56688856322237613, 0.55397105203699781),
+        Vector3(-0.85540931987987767, -0.98714875665059942, 0.66253492424895866),
+        Vector3(-0.54745452883476031, -0.75468407140023419, -0.32694444673243173),
+        Vector3(-0.37448369750572408, -0.64157035478743807, -0.85399771294889382),
+        Vector3(0.3436327196021538, -0.91703647081084272, -0.45663770569485196),
+        Vector3(-0.04982371277306874, 0.74639846332109894, 0.92912774982926893),
+        Vector3(-0.058806439496143503, 0.87911717757643437, -0.63221327426288387),
+        Vector3(0.32737251334983997, -0.83701673819538203, 0.34145367419681172),
+        Vector3(0.34065929586982469, -0.064118769120481978, -0.98611444270016768),
+        Vector3(-0.93526826672803298, 0.21720345224180693, 0.51038756834152155),
+        Vector3(-0.31929468827681662, 0.25157291076291854, 0.49235781005778922),
+        Vector3(-0.35189555778324488, 0.56359882211831969, 0.038090846801484668),
+        Vector3(0.90186336878534368, 0.72718319117318186, 0.82861879885358558),
+        Vector3(-0.7057808085547953, 0.34633258189478155, -0.60888037428177133),
+        Vector3(0.63475222669322995, 0.62080671648846719, 0.69751731133011363),
+        Vector3(-0.46192097622776451, -0.65088963752887785, -0.11641923284325373),
+        Vector3(-0.48648397707950874, -0.93014024433203468, -0.80340438374861745),
+        Vector3(0.093140103711069733, -0.51887168766604153, 0.82860462406999358),
+        Vector3(0.40237451571487282, -0.87540996382432146, 0.87884329924384508),
+        Vector3(-0.83558090907931937, 0.37455709517474656, 0.015806570320783253),
+        Vector3(-0.34480647976163425, 0.16188416077368051, 0.95567619736859433),
+        Vector3(-0.72518119846807316, -0.53163144985296862, -0.57539266563815405),
+        Vector3(0.98964704156644223, 0.75663751364227649, -0.29947883502255823),
+        Vector3(-0.30758097151951058, 0.7119759254673983, 0.20156525454090923),
+        Vector3(0.00011058265590158101, 0.41072186376539688, 0.027545706386606472),
+        Vector3(0.99382156321604631, -0.16158837761091382, -0.32283527293290459),
+        Vector3(0.018789215038225837, -0.23777564916540006, 0.21809741308867769),
+        Vector3(-0.22367678888232401, -0.40556937579243757, -0.18279673688035503),
+        Vector3(0.72211807982282172, -0.51020539049500457, 0.82983721054332271),
+        Vector3(-0.87215717445083596, -0.31586553605166157, 0.29410242734846515),
+        Vector3(0.98553016984149688, -0.37257862291149269, -0.2086635906496036),
+        Vector3(-0.93917003135133215, -0.20651103332468979, 0.92033019187391041),
+        Vector3(-0.13606932223642221, 0.44756512304942375, 0.55418359906149828),
+        Vector3(-0.57205836130917576, 0.16527035354959363, 0.33825662896270003),
+        Vector3(0.8568109663100989, -0.82064238265963341, 0.88484602281520996),
+        Vector3(0.8860617664944066, 0.073850465478624283, 0.2314126224684272),
+        Vector3(0.15928918237530776, 0.72137254596615974, 0.22313189995848304),
+        Vector3(0.99873726033709165, -0.95347915999307109, 0.091598781214859537),
+        Vector3(0.43744265463931575, -0.33431253792097826, 0.76376753715531365),
+        Vector3(0.26437928381388964, -0.94580871319450555, -0.67225978881330317),
+        Vector3(-0.63757810377453139, -0.28611951097296129, -0.71863637280542569),
+        Vector3(0.93108905554894528, 0.24839021433733244, -0.30269136732293467),
+        Vector3(0.20159663311577125, 0.46949761627252129, -0.65843374040823588),
+        Vector3(0.09960375060304516, -0.3457074382334252, 0.10347574038059593),
+        Vector3(-0.11974904667429309, -0.57547558494152673, 0.81797220716543095),
+        Vector3(0.67078059975559889, 0.80222100212381364, 0.73775007897090839),
+        Vector3(-0.74779632782894301, -0.37341675260968543, -0.57343746884200608),
+        Vector3(0.40971761899524695, 0.82408573010318675, -0.047169567809282387),
+        Vector3(-0.023645015840926042, -0.42100215380297257, 0.8216486209676479),
+        Vector3(0.25269147519927593, 0.42320405097772285, -0.56987406733059109),
+        Vector3(-0.96597969361280278, 0.8495666360137446, -0.74841548177134487),
+        Vector3(-0.15056314169309393, -0.22207423751802902, 0.26696696765424766),
+        Vector3(0.76617281520347302, 0.8170874983563734, -0.02844043641353855),
+        Vector3(-0.82022910833353091, 0.21533233518415185, 0.85570274134496294),
+        Vector3(-0.50701979156138299, -0.58701221441750973, -0.26293039592190814),
+        Vector3(-0.71519900738783804, 0.073965671397610899, 0.36520964277730439),
+        Vector3(0.79911070694942277, 0.75654579425975266, -0.68407425921373255),
+        Vector3(-0.013678528995219597, -0.94243407718746053, 0.82453817320008582),
+        Vector3(0.73410448082018886, -0.5153604970256136, 0.33534836304011084),
+        Vector3(0.35116972971148974, 0.57208779992850944, 0.65009331721606989),
+        Vector3(0.0097717142404170065, -0.64864579353788465, 0.018929863571948147),
+        Vector3(-0.14774872655399596, 0.88088329127840925, -0.8084023000239049),
+        Vector3(0.31057805276251016, 0.22853770467371382, -0.20523903235190943),
+        Vector3(0.81094670109567657, -0.32011702052519508, -0.62414132317362514),
+        Vector3(-0.65666500045750198, -0.33977821558031363, 0.93530762457576078),
+        Vector3(0.47862360900437917, -0.21596649537996548, 0.61026478540762485),
+        Vector3(-0.73514708446056909, 0.36205296607018411, -0.28755547803259873),
+        Vector3(0.72947887001008138, 0.79085242359108321, -0.71755262824638044),
+        Vector3(-0.035477099702359127, -0.67813879562604473, -0.65132730401659267),
+        Vector3(-0.50729422184622419, 0.45337480246927053, 0.37373334886792331),
+        Vector3(-0.86141973418404827, -0.12749850478235791, -0.84361793181123534),
+        Vector3(0.031661425690966638, -0.77938850275262495, 0.16412973284955568)
+    };
+
+    // Create parameters matching the test output
+    auto p = createParams(Vector3(0, 0, -9.81), 1e-4, 1e-3, 1e-8, 1e-10, 1e-6, 1e-5, 1e-7, 1e-8);
+    PreintegratedGalileanMeasurements pim(p);
+
+    // Hardcoded expected covariance matrix from test output
+    Matrix20 expectedCov;
+    expectedCov.setZero();
+
+    // Fill in non-zero elements based on test output
+    expectedCov(0,0) = 1.0000270604442544e-08;
+    expectedCov(0,4) = 7.0595649955765389e-12;
+    expectedCov(0,5) = -4.4999230699266346e-10;
+    expectedCov(0,10) = 4.9479375217927619e-13;
+    expectedCov(0,14) = 8.9810974039742635e-14;
+    expectedCov(0,15) = -2.5886027002407026e-13;
+    expectedCov(0,18) = 2.3712277558192296e-13;
+
+    expectedCov(1,1) = 1.0000270325764314e-08;
+    expectedCov(1,3) = -7.1534662299924074e-12;
+    expectedCov(1,5) = 1.0988949195053817e-09;
+    expectedCov(1,6) = -1.2878197297809785e-10;
+    expectedCov(1,11) = 4.9477810312293897e-13;
+    expectedCov(1,13) = -8.9181931711712395e-14;
+    expectedCov(1,15) = 1.5460250872924995e-13;
+    expectedCov(1,16) = 8.8975836485365335e-14;
+    expectedCov(1,18) = -1.0001623132925535e-13;
+
+    expectedCov(2,2) = 1.0000266678714801e-08;
+    expectedCov(2,3) = 4.5008234882330594e-10;
+    expectedCov(2,4) = -1.0988850424599245e-09;
+    expectedCov(2,6) = -1.2435079923208572e-09;
+    expectedCov(2,7) = 8.8769383420965683e-10;
+    expectedCov(2,12) = 4.948747734978064e-13;
+    expectedCov(2,13) = 2.6099853800576492e-13;
+    expectedCov(2,14) = -1.5270379992897358e-13;
+    expectedCov(2,17) = -2.387285549816025e-13;
+    expectedCov(2,18) = 9.8322929385778101e-14;
+
+    expectedCov(3,3) = 1.0007612314338633e-06;
+    expectedCov(3,4) = -3.4425789562704828e-10;
+    expectedCov(3,5) = 1.2288677287590677e-10;
+    expectedCov(3,6) = -5.0051615082198909e-07;
+    expectedCov(3,7) = 1.3280161854014435e-10;
+    expectedCov(3,8) = -6.3315714634209226e-11;
+    expectedCov(3,13) = 4.9522744720666912e-11;
+    expectedCov(3,14) = 4.5303085440009197e-13;
+    expectedCov(3,15) = 3.5729940788238112e-13;
+    expectedCov(3,16) = -4.9518933953356538e-11;
+    expectedCov(3,17) = -4.6234868796050756e-13;
+    expectedCov(3,18) = -3.5655777227909891e-13;
+
+    expectedCov(4,4) = 1.0006779394940329e-06;
+    expectedCov(4,5) = 3.1704114037760156e-11;
+    expectedCov(4,6) = 3.0442062751978246e-10;
+    expectedCov(4,7) = -5.0036954346791578e-07;
+    expectedCov(4,8) = -5.8989928121223001e-12;
+    expectedCov(4,14) = 4.9506938598529081e-11;
+    expectedCov(4,15) = 3.2992689300551393e-13;
+    expectedCov(4,16) = 5.3298697064428349e-13;
+    expectedCov(4,17) = -4.9496112509609899e-11;
+    expectedCov(4,18) = -3.2960910513205797e-13;
+
+    expectedCov(5,5) = 1.0011786096215632e-06;
+    expectedCov(5,6) = -5.6747250188091721e-11;
+    expectedCov(5,7) = 3.2154185234346361e-11;
+    expectedCov(5,8) = -5.0072927898702043e-07;
+    expectedCov(5,14) = -3.5501961825607505e-13;
+    expectedCov(5,15) = 4.9562691438179637e-11;
+    expectedCov(5,16) = 3.5883082964373175e-13;
+    expectedCov(5,17) = 3.5489292641200148e-13;
+    expectedCov(5,18) = -4.9547873173917534e-11;
+
+    expectedCov(6,6) = 3.3379077811130642e-07;
+    expectedCov(6,7) = -1.5860637794830744e-10;
+    expectedCov(6,8) = 4.2647030893392583e-11;
+    expectedCov(6,13) = -3.3126417449294542e-11;
+    expectedCov(6,15) = -1.4223450028542196e-13;
+    expectedCov(6,16) = 3.3126818356331906e-11;
+    expectedCov(6,17) = 7.5429123147231813e-14;
+    expectedCov(6,18) = 1.4187744877850454e-13;
+
+    expectedCov(7,7) = 3.3356442038822598e-07;
+    expectedCov(7,8) = -1.7074650854655728e-11;
+    expectedCov(7,13) = 1.2978123530044477e-13;
+    expectedCov(7,14) = -3.3090077297995523e-11;
+    expectedCov(7,16) = -1.2712655517637239e-13;
+    expectedCov(7,17) = 3.3088436946125534e-11;
+    expectedCov(7,18) = 1.1143217542677243e-13;
+
+    expectedCov(8,8) = 3.339066059702652e-07;
+    expectedCov(8,13) = 1.4510975714069637e-13;
+    expectedCov(8,14) = 1.3277318330195562e-13;
+    expectedCov(8,15) = -3.3148372245374011e-11;
+    expectedCov(8,17) = -1.4510662926671228e-13;
+    expectedCov(8,18) = 3.3142106256165256e-11;
+
+    expectedCov(9,9) = 3.2845000000000019e-17;
+    expectedCov(9,16) = 1.5211623415035431e-17;
+    expectedCov(9,17) = 2.6044100644233749e-17;
+    expectedCov(9,18) = 9.0940599158027242e-18;
+    expectedCov(9,19) = 4.9500000000000009e-17;
+
+    // Fill symmetric elements
+    for (int i = 0; i < 20; ++i) {
+        for (int j = i+1; j < 20; ++j) {
+            expectedCov(j,i) = expectedCov(i,j);
+        }
+    }
+
+    // Fill in remaining diagonal elements
+    expectedCov(10,10) = 9.9999999999999756e-13;
+    expectedCov(11,11) = 9.9999999999999776e-13;
+    expectedCov(12,12) = 9.9999999999999756e-13;
+    expectedCov(13,13) = 1.0031057937113321e-10;
+    expectedCov(14,14) = 1.0012818912873104e-10;
+    expectedCov(15,15) = 1.003712636119939e-10;
+    expectedCov(16,16) = 1.002750027621785e-10;
+    expectedCov(17,17) = 1.0008249404002709e-10;
+    expectedCov(18,18) = 1.0028048145925864e-10;
+    expectedCov(19,19) = 1.0000000000000013e-16;
+
+    // Hardcoded expected Jxi matrix from test output
+    Matrix20 expectedJxi;
+    expectedJxi.setZero();
+
+    // Fill the non-zero elements of Jxi
+    expectedJxi.setIdentity();  // Start with identity
+
+    // Update specific non-diagonal elements
+    expectedJxi(0,10) = -0.99929576021811561;
+    expectedJxi(0,11) = 0.023871509567193135;
+    expectedJxi(0,12) = -0.0093191047599329446;
+
+    expectedJxi(1,10) = -0.024136881495347731;
+    expectedJxi(1,11) = -0.99862590723942746;
+    expectedJxi(1,12) = 0.037353338412925215;
+
+    expectedJxi(2,10) = 0.0082232480733812896;
+    expectedJxi(2,11) = -0.037355664646248836;
+    expectedJxi(2,12) = -0.99903106855713419;
+
+    expectedJxi(3,10) = -0.0021977182762289785;
+    expectedJxi(3,11) = -0.0034019736453988602;
+    expectedJxi(3,12) = -0.045211054695005574;
+    expectedJxi(3,13) = -0.99929576021811561;
+    expectedJxi(3,14) = 0.023871509567193135;
+    expectedJxi(3,15) = -0.0093191047599329446;
+
+    expectedJxi(4,10) = 0.0010261840148023042;
+    expectedJxi(4,11) = 0.0045490740424084077;
+    expectedJxi(4,12) = 0.10901443916304006;
+    expectedJxi(4,13) = -0.024136881495347731;
+    expectedJxi(4,14) = -0.99862590723942746;
+    expectedJxi(4,15) = 0.037353338412925215;
+
+    expectedJxi(5,10) = 0.039272324606490681;
+    expectedJxi(5,11) = -0.11545221767087978;
+    expectedJxi(5,12) = 0.003239661220501509;
+    expectedJxi(5,13) = 0.0082232480733812896;
+    expectedJxi(5,14) = -0.037355664646248836;
+    expectedJxi(5,15) = -0.99903106855713419;
+
+    expectedJxi(6,10) = 0.00046887396442970073;
+    expectedJxi(6,11) = 0.019008384449898729;
+    expectedJxi(6,12) = 0.12407582767559797;
+    expectedJxi(6,13) = 0.49952841495625649;
+    expectedJxi(6,14) = -0.017192957513690467;
+    expectedJxi(6,15) = 0.001804438121884179;
+    expectedJxi(6,16) = -0.99929576021811561;
+    expectedJxi(6,17) = 0.023871509567193135;
+    expectedJxi(6,18) = -0.0093191047599329446;
+    expectedJxi(6,19) = -0.10988323143284638;
+
+    expectedJxi(7,10) = -0.013273747627923351;
+    expectedJxi(7,11) = -0.0034570956390125493;
+    expectedJxi(7,12) = -0.088613348915305021;
+    expectedJxi(7,13) = 0.017211814348144894;
+    expectedJxi(7,14) = 0.49906751496441049;
+    expectedJxi(7,15) = -0.021115466706402949;
+    expectedJxi(7,16) = -0.024136881495347731;
+    expectedJxi(7,17) = -0.99862590723942746;
+    expectedJxi(7,18) = 0.037353338412925215;
+    expectedJxi(7,19) = -0.044996356964070797;
+
+    expectedJxi(8,10) = -0.12091762731878973;
+    expectedJxi(8,11) = 0.094691692841254282;
+    expectedJxi(8,12) = -0.0035301018768042784;
+    expectedJxi(8,13) = -0.00096500525184262998;
+    expectedJxi(8,14) = 0.021069307118595396;
+    expectedJxi(8,15) = 0.49945166676125824;
+    expectedJxi(8,16) = 0.0082232480733812896;
+    expectedJxi(8,17) = -0.037355664646248829;
+    expectedJxi(8,18) = -0.99903106855713419;
+    expectedJxi(8,19) = -0.00071347533165586996;
+
+    expectedJxi(9,19) = -1.0000000000000007;
+
+    Matrix20 expectedCov_gtsam = convertLieplusplusToGTSAMOrdering20(expectedCov); // Fails!
+    Matrix20 expectedJxi_gtsam = convertLieplusplusToGTSAMOrdering20(expectedJxi); // Passes!
+
+    // Integrate measurements using hardcoded values
+    for (size_t j = 0; j < n; ++j) {
+        pim.integrateMeasurement(accs[j], gyros[j], dt);
+    }
+
+    // Compare with hardcoded expected values
+    EXPECT(assert_equal(expectedCov_gtsam, pim.uncertaintyCovariance(), 1e-10));
+    EXPECT(assert_equal(expectedJxi_gtsam, pim.biasJacobian(), 1e-10));
+
+    std::vector<double> expectedSorted = flattenAndSort(expectedCov);
+    std::vector<double> actualSorted = flattenAndSort(pim.uncertaintyCovariance());
+
+    for (size_t i = 0; i < expectedSorted.size(); ++i) {
+        EXPECT(assert_equal(expectedSorted[i], actualSorted[i], 1e-10));
+    }
+
+    std::vector<double> expectedSorted2 = flattenAndSort(expectedJxi);
+    std::vector<double> actualSorted2 = flattenAndSort(pim.biasJacobian());
+
+    for (size_t i = 0; i < expectedSorted2.size(); ++i) {
+        EXPECT(assert_equal(expectedSorted2[i], actualSorted2[i], 1e-10));
+    }
+
+}
+
 
 /* ************************************************************************* */
 int main() {

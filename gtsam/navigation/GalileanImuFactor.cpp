@@ -109,14 +109,14 @@ Vector10 PreintegratedGalileanMeasurements::mapBias6ToTangent10(const Vector6& b
 
 // Convert measurement in Lie++ ordering [omega; acc; virtual_vel; virtual_time]
 // to GTSAM Upsilon tangent [rho; nu; theta; t]
-Vector10 PreintegratedGalileanMeasurements::mapMeasurementToUpsilonTangent(const Vector10& measurement) {
+Vector10 PreintegratedGalileanMeasurements::mapMeasurement10ToTangent10(const Vector10& measurement10D) {
     Vector10 tangent = Vector10::Zero();
     // Convert from Lie++ ordering [omega; acc; virtual_vel; virtual_time]
     // to GTSAM ordering [rho; nu; theta; t]
-    tangent.segment<3>(THETA_IDX) = measurement.segment<3>(0); // omega -> theta (rotation)
-    tangent.segment<3>(NU_IDX) = measurement.segment<3>(3);    // acc -> nu (velocity)
-    tangent.segment<3>(RHO_IDX) = measurement.segment<3>(6);   // virtual_vel -> rho (position)
-    tangent(T_IDX) = measurement(9);                          // virtual_time -> t (time)
+    tangent.segment<3>(THETA_IDX) = measurement10D.segment<3>(0); // omega -> theta (rotation)
+    tangent.segment<3>(NU_IDX) = measurement10D.segment<3>(3);    // acc -> nu (velocity)
+    tangent.segment<3>(RHO_IDX) = measurement10D.segment<3>(6);   // virtual_vel -> rho (position)
+    tangent(T_IDX) = measurement10D(9);                          // virtual_time -> t (time)
     return tangent;
 }
 
@@ -139,7 +139,7 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
     Vector10 w_unbiased = w - bias_10D;
 
     // Convert to Upsilon tangent space (rearrange components for GTSAM)
-    Vector10 tangent_arg = mapMeasurementToUpsilonTangent(w_unbiased);
+    Vector10 tangent_arg = mapMeasurement10ToTangent10(w_unbiased);
 
     // Compute matrices for integration
     Matrix10 Lj = Gal3::LeftJacobian(tangent_arg * dt);
@@ -159,26 +159,58 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
     B.block<10, 10>(0, 0) = -K;
     B.block<10, 10>(UPS_DIM, UPS_DIM) = deltaUpsilon_.AdjointMap() * dt;
 
-    // Create noise covariance Q_d (20x20)
+    // Create noise covariance Q_d (20x20) in MEASUREMENT SPACE
+    // This is the key fix - Q_d should be in the measurement space, not tangent space
     Matrix20 Q_d = Matrix20::Zero();
-    // Measurement noise
-    Q_d.block<3,3>(0, 0) = params->gyroscopeCovariance / dt;   // gyro
-    Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt; // acc
-    Q_d.block<3,3>(6, 6) = params->virtualVelCovariance / dt;   // virtual velocity
-    Q_d(9, 9) = params->virtualTimeScaleCovariance / dt;       // virtual time
-    // Bias random walk
-    Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt; // gyro bias
-    Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;   // acc bias
-    Q_d.block<3,3>(16, 16) = params->biasVirtualVelCovariance / dt; // virtual velocity bias
-    Q_d(19, 19) = params->biasVirtualTimeCovariance / dt;      // virtual time bias
 
-    // Update covariance
-    preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d * B.transpose();
+    // First 10 dimensions are in measurement space [omega, acc, virtual_vel, virtual_time]
+    Q_d.block<3,3>(0, 0) = params->gyroscopeCovariance / dt;      // omega
+    Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt;  // acc
+    Q_d.block<3,3>(6, 6) = params->virtualVelCovariance / dt;     // virtual velocity
+    Q_d(9, 9) = params->virtualTimeScaleCovariance / dt;          // virtual time
+
+    // Last 10 dimensions are bias random walk in original space
+    Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;     // gyro bias
+    Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;       // acc bias
+    Q_d.block<3,3>(16, 16) = params->biasVirtualVelCovariance / dt;     // virtual velocity bias
+    Q_d(19, 19) = params->biasVirtualTimeCovariance / dt;              // virtual time bias
+
+    // The B matrix needs to be adjusted to map from measurement space to tangent space
+    Matrix20 B_corrected = Matrix20::Zero();
+
+    // Top-left block: from measurement space to tangent space
+    Matrix10 T_measurement_to_tangent = Matrix10::Zero();
+    // This matrix transforms from [omega, acc, virtual_vel, virtual_time]
+    // to [rho, nu, theta, t]
+    T_measurement_to_tangent.block<3,3>(0, 6) = Matrix3::Identity();  // virtual_vel -> rho
+    T_measurement_to_tangent.block<3,3>(3, 3) = Matrix3::Identity();  // acc -> nu
+    T_measurement_to_tangent.block<3,3>(6, 0) = Matrix3::Identity();  // omega -> theta
+    T_measurement_to_tangent(9, 9) = 1.0;                            // virtual_time -> t
+
+    B_corrected.block<10, 10>(0, 0) = -K * T_measurement_to_tangent;
+
+    // Bottom-right block: bias space remains the same
+    Matrix10 T_bias_to_bias = Matrix10::Zero();
+    T_bias_to_bias.block<3,3>(0, 0) = Matrix3::Identity();  // omega bias
+    T_bias_to_bias.block<3,3>(3, 3) = Matrix3::Identity();  // acc bias
+    T_bias_to_bias.block<3,3>(6, 6) = Matrix3::Identity();  // virtual velocity bias
+    T_bias_to_bias(9, 9) = 1.0;                            // virtual time bias
+
+    B_corrected.block<10, 10>(UPS_DIM, UPS_DIM) = deltaUpsilon_.AdjointMap() * dt * T_bias_to_bias;
+
+    // Update covariance with corrected B matrix
+    preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B_corrected * Q_d * B_corrected.transpose();
 
     // Update bias Jacobian
     Matrix20 Phi_b = Matrix20::Identity();
     Phi_b.block<10, 10>(0, UPS_DIM) = -K;
     preintBiasJacobian_ = Phi_b * preintBiasJacobian_;
+
+    // std::cout << "K matrix:\n" << K << std::endl;
+    // std::cout << "A matrix:\n" << A << std::endl;
+    // std::cout << "B matrix:\n" << B << std::endl;
+    // std::cout << "Q_d matrix:\n" << Q_d << std::endl;
+
 }
 
 Vector9 PreintegratedGalileanMeasurements::biasCorrectedDelta(
