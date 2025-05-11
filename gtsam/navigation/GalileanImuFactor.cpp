@@ -161,45 +161,35 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
 
     // Create noise covariance Q_d (20x20) in MEASUREMENT SPACE
     // This is the key fix - Q_d should be in the measurement space, not tangent space
+    // Create noise covariance Q_d in TANGENT SPACE (not measurement space)
     Matrix20 Q_d = Matrix20::Zero();
 
-    // First 10 dimensions are in measurement space [omega, acc, virtual_vel, virtual_time]
-    Q_d.block<3,3>(0, 0) = params->gyroscopeCovariance / dt;      // omega
-    Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt;  // acc
-    Q_d.block<3,3>(6, 6) = params->virtualVelCovariance / dt;     // virtual velocity
-    Q_d(9, 9) = params->virtualTimeScaleCovariance / dt;          // virtual time
+    // First 10 dimensions in GTSAM tangent space [rho, nu, theta, t]
+    Q_d.block<3,3>(0, 0) = params->virtualVelCovariance / dt;        // rho
+    Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt;     // nu
+    Q_d.block<3,3>(6, 6) = params->gyroscopeCovariance / dt;         // theta
+    Q_d(9, 9) = params->virtualTimeScaleCovariance / dt;             // t
 
-    // Last 10 dimensions are bias random walk in original space
-    Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;     // gyro bias
-    Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;       // acc bias
-    Q_d.block<3,3>(16, 16) = params->biasVirtualVelCovariance / dt;     // virtual velocity bias
-    Q_d(19, 19) = params->biasVirtualTimeCovariance / dt;              // virtual time bias
+    // Last 10 dimensions are bias random walk in GTSAM bias ordering [b_omega, b_acc, b_nu, b_rho]
+    Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;       // gyro bias
+    Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;         // acc bias
+    Q_d.block<3,3>(16, 16) = params->biasVirtualVelCovariance / dt;       // virtual velocity bias
+    Q_d(19, 19) = params->biasVirtualTimeCovariance / dt;                 // virtual time bias
 
-    // The B matrix needs to be adjusted to map from measurement space to tangent space
-    Matrix20 B_corrected = Matrix20::Zero();
+    std::cout << "Q_d diagonal elements:" << std::endl;
+    std::cout << "  rho:   " << Q_d.block<3,3>(0,0).diagonal().transpose() << std::endl;
+    std::cout << "  nu:    " << Q_d.block<3,3>(3,3).diagonal().transpose() << std::endl;
+    std::cout << "  theta: " << Q_d.block<3,3>(6,6).diagonal().transpose() << std::endl;
+    std::cout << "  t:     " << Q_d(9,9) << std::endl;
+    std::cout << "  bias:  " << Q_d.diagonal().tail<10>().transpose() << std::endl;
 
-    // Top-left block: from measurement space to tangent space
-    Matrix10 T_measurement_to_tangent = Matrix10::Zero();
-    // This matrix transforms from [omega, acc, virtual_vel, virtual_time]
-    // to [rho, nu, theta, t]
-    T_measurement_to_tangent.block<3,3>(0, 6) = Matrix3::Identity();  // virtual_vel -> rho
-    T_measurement_to_tangent.block<3,3>(3, 3) = Matrix3::Identity();  // acc -> nu
-    T_measurement_to_tangent.block<3,3>(6, 0) = Matrix3::Identity();  // omega -> theta
-    T_measurement_to_tangent(9, 9) = 1.0;                            // virtual_time -> t
+    // Update covariance
+    preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d * B.transpose();
 
-    B_corrected.block<10, 10>(0, 0) = -K * T_measurement_to_tangent;
-
-    // Bottom-right block: bias space remains the same
-    Matrix10 T_bias_to_bias = Matrix10::Zero();
-    T_bias_to_bias.block<3,3>(0, 0) = Matrix3::Identity();  // omega bias
-    T_bias_to_bias.block<3,3>(3, 3) = Matrix3::Identity();  // acc bias
-    T_bias_to_bias.block<3,3>(6, 6) = Matrix3::Identity();  // virtual velocity bias
-    T_bias_to_bias(9, 9) = 1.0;                            // virtual time bias
-
-    B_corrected.block<10, 10>(UPS_DIM, UPS_DIM) = deltaUpsilon_.AdjointMap() * dt * T_bias_to_bias;
-
-    // Update covariance with corrected B matrix
-    preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B_corrected * Q_d * B_corrected.transpose();
+    std::cout << "A matrix:\n" << A << std::endl;
+    std::cout << "B matrix:\n" << B << std::endl;
+    std::cout << "A*Cov*A^T:\n" << (A * preintMeasCov_ * A.transpose()) << std::endl;
+    std::cout << "B*Q*B^T:\n" << (B * Q_d * B.transpose()) << std::endl;
 
     // Update bias Jacobian
     Matrix20 Phi_b = Matrix20::Identity();
