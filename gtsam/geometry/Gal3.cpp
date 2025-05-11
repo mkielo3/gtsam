@@ -358,11 +358,16 @@ Matrix10 Gal3::AdjointMap() const {
     // Block (6,6) to (8,8) : R
     Ad.block<3,3>(6,6) = Rmat;
 
+    // IDK if these are necessary? they break all the tests.
+    // Ad.block<3,3>(6,3) = -t_ * Rmat;
+    // Ad.block<3,1>(6,9) = v_;
+
     // Block (9,9) : 1
     Ad(9,9) = 1.0;
 
     return Ad;
 }
+
 
 //------------------------------------------------------------------------------
 Vector10 Gal3::Adjoint(const Vector10& xi, OptionalJacobian<10, 10> H_g, OptionalJacobian<10, 10> H_xi) const {

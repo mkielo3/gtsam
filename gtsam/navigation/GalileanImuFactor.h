@@ -152,6 +152,7 @@ class GTSAM_EXPORT PreintegratedGalileanMeasurements : public PreintegrationBase
       return Gal3::Expmap(tangent * dt);
   }
 
+
  protected: // Internal state representation
   /// Preintegrated measurement mean \hat{\Upsilon}_k (stores deltaR, deltaP, deltaV, deltaT)
   Gal3 deltaUpsilon_;
