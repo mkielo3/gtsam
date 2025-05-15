@@ -120,93 +120,13 @@ Vector10 PreintegratedGalileanMeasurements::mapMeasurement10ToTangent10(const Ve
     return tangent;
 }
 
-// void PreintegratedGalileanMeasurements::integrateMeasurement(
-//     const Vector3& measuredAcc, const Vector3& measuredOmega, double dt) {
-
-//     if (dt <= 0) {
-//         std::cerr << "WARNING: dt <= 0 in integrateMeasurement. Skipping integration." << std::endl;
-//         return;
-//     }
-
-//     auto params = galileanParams();
-
-//     // Create input with virtual components set to zero
-//     Vector10 w;
-//     w << measuredOmega, measuredAcc, Vector3::Zero(), 1.0;
-
-//     // Remove bias from measurement
-//     Vector10 bias_10D = mapBias6ToTangent10(biasHat_.vector());
-//     Vector10 w_unbiased = w - bias_10D;
-
-//     // Convert to Upsilon tangent space (rearrange components for GTSAM)
-//     Vector10 tangent_arg = mapMeasurement10ToTangent10(w_unbiased);
-
-//     // Compute matrices for integration
-//     Matrix10 Lj = Gal3::LeftJacobian(tangent_arg * dt);
-//     Matrix10 Adj_Upsilon = deltaUpsilon_.AdjointMap();
-//     Matrix10 K = Adj_Upsilon * Lj * dt;
-
-//     // Update mean using matrix exponential
-//     deltaUpsilon_ = deltaUpsilon_ * Gal3::Expmap(tangent_arg * dt);
-//     deltaTij_ += dt;
-
-//     // Propagate covariance
-//     Matrix20 A = Matrix20::Identity();
-//     A.block<10, 10>(0, UPS_DIM) = Lj * dt;
-//     A.block<10, 10>(UPS_DIM, UPS_DIM) = Gal3::Expmap(tangent_arg * dt).AdjointMap();
-
-//     Matrix20 B = Matrix20::Zero();
-//     B.block<10, 10>(0, 0) = -K;
-//     B.block<10, 10>(UPS_DIM, UPS_DIM) = deltaUpsilon_.AdjointMap() * dt;
-
-//     // Create noise covariance Q_d (20x20) in MEASUREMENT SPACE
-//     // This is the key fix - Q_d should be in the measurement space, not tangent space
-//     // Create noise covariance Q_d in TANGENT SPACE (not measurement space)
-//     Matrix20 Q_d = Matrix20::Zero();
-
-//     // First 10 dimensions in GTSAM tangent space [rho, nu, theta, t]
-//     Q_d.block<3,3>(0, 0) = params->virtualVelCovariance / dt;        // rho
-//     Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt;     // nu
-//     Q_d.block<3,3>(6, 6) = params->gyroscopeCovariance / dt;         // theta
-//     Q_d(9, 9) = params->virtualTimeScaleCovariance / dt;             // t
-
-//     // Last 10 dimensions are bias random walk in GTSAM bias ordering [b_omega, b_acc, b_nu, b_rho]
-//     Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;       // gyro bias
-//     Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;         // acc bias
-//     Q_d.block<3,3>(16, 16) = params->biasVirtualVelCovariance / dt;       // virtual velocity bias
-//     Q_d(19, 19) = params->biasVirtualTimeCovariance / dt;                 // virtual time bias
-
-//     // std::cout << "Q_d diagonal elements:" << std::endl;
-//     // std::cout << "  rho:   " << Q_d.block<3,3>(0,0).diagonal().transpose() << std::endl;
-//     // std::cout << "  nu:    " << Q_d.block<3,3>(3,3).diagonal().transpose() << std::endl;
-//     // std::cout << "  theta: " << Q_d.block<3,3>(6,6).diagonal().transpose() << std::endl;
-//     // std::cout << "  t:     " << Q_d(9,9) << std::endl;
-//     // std::cout << "  bias:  " << Q_d.diagonal().tail<10>().transpose() << std::endl;
-
-//     // Update covariance
-//     // std::cout << "Cov_old (preintMeasCov_ BEFORE update):\n" << preintMeasCov_ << std::endl;
-//     preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d * B.transpose();
-//     // std::cout << "Cov_new (preintMeasCov_ AFTER update):\n" << preintMeasCov_ << std::endl;
-
-//     // std::cout << "A matrix:\n" << A << std::endl;
-//     // std::cout << "B matrix:\n" << B << std::endl;
-//     // std::cout << "A*Cov*A^T:\n" << (A * preintMeasCov_ * A.transpose()) << std::endl;
-//     // std::cout << "B*Q*B^T:\n" << (B * Q_d * B.transpose()) << std::endl;
-
-//     // Update bias Jacobian
-//     Matrix20 Phi_b = Matrix20::Identity();
-//     Phi_b.block<10, 10>(0, UPS_DIM) = -K;
-//     preintBiasJacobian_ = Phi_b * preintBiasJacobian_;
-
-//     // std::cout << "K matrix:\n" << K << std::endl;
-//     // std::cout << "A matrix:\n" << A << std::endl;
-//     // std::cout << "B matrix:\n" << B << std::endl;
-//     // std::cout << "Q_d matrix:\n" << Q_d << std::endl;
-
-// }
-
 void PreintegratedGalileanMeasurements::integrateMeasurement(
     const Vector3& measuredAcc, const Vector3& measuredOmega, double dt) {
+
+    std::cout << "\n=== C++ INTEGRATION STEP ===" << std::endl;
+    std::cout << "Input acc: " << measuredAcc.transpose() << std::endl;
+    std::cout << "Input gyro: " << measuredOmega.transpose() << std::endl;
+    std::cout << "Input dt: " << dt << std::endl;
 
     if (dt <= 0) {
         std::cerr << "WARNING: dt <= 0 in integrateMeasurement. Skipping integration." << std::endl;
@@ -215,137 +135,118 @@ void PreintegratedGalileanMeasurements::integrateMeasurement(
 
     auto params = galileanParams();
 
-    // Debug: Print input measurements
-    std::cout << "\n===== integrateMeasurement DEBUG =====" << std::endl;
-    std::cout << "measuredAcc: " << measuredAcc.transpose() << std::endl;
-    std::cout << "measuredOmega: " << measuredOmega.transpose() << std::endl;
-    std::cout << "dt: " << dt << std::endl;
-
     // Create input with virtual components set to zero
     Vector10 w;
     w << measuredOmega, measuredAcc, Vector3::Zero(), 1.0;
+    std::cout << "Full measurement w: " << w.transpose() << std::endl;
 
     // Remove bias from measurement
     Vector10 bias_10D = mapBias6ToTangent10(biasHat_.vector());
+    std::cout << "Bias vector (10D): " << bias_10D.transpose() << std::endl;
+
     Vector10 w_unbiased = w - bias_10D;
+    std::cout << "Unbiased measurement: " << w_unbiased.transpose() << std::endl;
 
     // Convert to Upsilon tangent space (rearrange components for GTSAM)
     Vector10 tangent_arg = mapMeasurement10ToTangent10(w_unbiased);
-
-    std::cout << "w (measurement space): " << w.transpose() << std::endl;
-    std::cout << "bias_10D: " << bias_10D.transpose() << std::endl;
-    std::cout << "w_unbiased: " << w_unbiased.transpose() << std::endl;
-    std::cout << "tangent_arg (GTSAM ordering): " << tangent_arg.transpose() << std::endl;
+    std::cout << "Tangent coeffs (after reordering): " << tangent_arg.transpose() << std::endl;
+    std::cout << "Tangent coeffs (after dt scaling): " << (tangent_arg * dt).transpose() << std::endl;
 
     // Compute matrices for integration
     Matrix10 Lj = Gal3::LeftJacobian(tangent_arg * dt);
-    Matrix10 Adj_Upsilon = deltaUpsilon_.AdjointMap();
-    Matrix10 K = Adj_Upsilon * Lj * dt;
+    std::cout << "Left Jacobian shape: " << Lj.rows() << "x" << Lj.cols() << std::endl;
+    std::cout << "Left Jacobian first few elements: ";
+    for (int i = 0; i < 10; i++)
+        std::cout << Lj(0, i) << " ";
+    std::cout << std::endl;
 
-    // Debug: Print key matrices
-    std::cout << "\nK matrix diagonal elements:" << std::endl;
-    std::cout << "  " << K.diagonal().transpose() << std::endl;
+    Matrix10 Adj_Upsilon = deltaUpsilon_.AdjointMap();
+    std::cout << "Adjoint map shape: " << Adj_Upsilon.rows() << "x" << Adj_Upsilon.cols() << std::endl;
+    std::cout << "Adjoint trace: " << Adj_Upsilon.trace() << std::endl;
+
+    Matrix10 K = Adj_Upsilon * Lj * dt;
+    std::cout << "K matrix shape: " << K.rows() << "x" << K.cols() << std::endl;
+    std::cout << "K matrix trace: " << K.trace() << std::endl;
+
+    // Save the old state for comparison
+    Gal3 old_upsilon = deltaUpsilon_;
+    std::cout << "Delta upsilon before: " << std::endl;
+    old_upsilon.print();
 
     // Update mean using matrix exponential
     deltaUpsilon_ = deltaUpsilon_ * Gal3::Expmap(tangent_arg * dt);
+    std::cout << "Delta upsilon after: " << std::endl;
+    deltaUpsilon_.print();
+
     deltaTij_ += dt;
+    std::cout << "Delta t after: " << deltaTij_ << std::endl;
+
+    // Get the exponential map result for comparison
+    Gal3 exp_result = Gal3::Expmap(tangent_arg * dt);
+    std::cout << "Exp result: " << std::endl;
+    exp_result.print();
+
+    // Get adjoint map of the exponential result
+    Matrix10 exp_adj = exp_result.AdjointMap();
+    std::cout << "Exp adjoint shape: " << exp_adj.rows() << "x" << exp_adj.cols() << std::endl;
+    std::cout << "Exp adjoint trace: " << exp_adj.trace() << std::endl;
+
+    // Store old values for comparison
+    Matrix20 old_cov = preintMeasCov_;
+    Matrix20 old_jac = preintBiasJacobian_;
 
     // Propagate covariance
     Matrix20 A = Matrix20::Identity();
     A.block<10, 10>(0, UPS_DIM) = Lj * dt;
-    A.block<10, 10>(UPS_DIM, UPS_DIM) = Gal3::Expmap(tangent_arg * dt).AdjointMap();
+    A.block<10, 10>(UPS_DIM, UPS_DIM) = exp_adj;
+    std::cout << "A matrix shape: " << A.rows() << "x" << A.cols() << std::endl;
+    std::cout << "A matrix diagonal: ";
+    for (int i = 0; i < 20; i++)
+        std::cout << A(i, i) << " ";
+    std::cout << std::endl;
 
     Matrix20 B = Matrix20::Zero();
     B.block<10, 10>(0, 0) = -K;
-    B.block<10, 10>(UPS_DIM, UPS_DIM) = deltaUpsilon_.AdjointMap() * dt;
+    B.block<10, 10>(UPS_DIM, UPS_DIM) = Adj_Upsilon * dt;
+    std::cout << "B matrix shape: " << B.rows() << "x" << B.cols() << std::endl;
+    std::cout << "B matrix trace: " << B.trace() << std::endl;
 
     // Create noise covariance Q_d in TANGENT SPACE
     Matrix20 Q_d = Matrix20::Zero();
-
     // First 10 dimensions in GTSAM tangent space [rho, nu, theta, t]
     Q_d.block<3,3>(0, 0) = params->getVirtualVelCovariance() / dt;        // rho
     Q_d.block<3,3>(3, 3) = params->accelerometerCovariance / dt;     // nu
     Q_d.block<3,3>(6, 6) = params->gyroscopeCovariance / dt;         // theta
     Q_d(9, 9) = params->getVirtualTimeScaleCovariance() / dt;             // t
-
     // Last 10 dimensions are bias random walk in GTSAM bias ordering [b_omega, b_acc, b_nu, b_rho]
     Q_d.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;       // gyro bias
     Q_d.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;         // acc bias
     Q_d.block<3,3>(16, 16) = params->getBiasVirtualVelCovariance() / dt;       // virtual velocity bias
     Q_d(19, 19) = params->getBiasVirtualTimeCovariance() / dt;                 // virtual time bias
-
-
-    // Alternative Q_d in MEASUREMENT SPACE (for comparison)
-    Matrix20 Q_d_measurement = Matrix20::Zero();
-    Q_d_measurement.block<3,3>(0, 0) = params->gyroscopeCovariance / dt;         // omega (gyro)
-    Q_d_measurement.block<3,3>(3, 3) = params->accelerometerCovariance / dt;     // acc
-    Q_d_measurement.block<3,3>(6, 6) = params->getVirtualVelCovariance() / dt;        // virtual_vel
-    Q_d_measurement(9, 9) = params->getVirtualTimeScaleCovariance() / dt;             // virtual_time
-    Q_d_measurement.block<3,3>(10, 10) = params->getBiasOmegaCovariance() / dt;
-    Q_d_measurement.block<3,3>(13, 13) = params->getBiasAccCovariance() / dt;
-    Q_d_measurement.block<3,3>(16, 16) = params->getBiasVirtualVelCovariance() / dt;
-    Q_d_measurement(19, 19) = params->getBiasVirtualTimeCovariance() / dt;
-
-    // Debug: Print Q_d matrices for comparison
-    std::cout << "\nQ_d (TANGENT space) diagonal elements:" << std::endl;
-    std::cout << "  rho:   " << Q_d.block<3,3>(0,0).diagonal().transpose() << std::endl;
-    std::cout << "  nu:    " << Q_d.block<3,3>(3,3).diagonal().transpose() << std::endl;
-    std::cout << "  theta: " << Q_d.block<3,3>(6,6).diagonal().transpose() << std::endl;
-    std::cout << "  t:     " << Q_d(9,9) << std::endl;
-    std::cout << "  bias:  " << Q_d.diagonal().tail<10>().transpose() << std::endl;
-
-    std::cout << "\nQ_d (MEASUREMENT space) diagonal elements:" << std::endl;
-    std::cout << "  omega: " << Q_d_measurement.block<3,3>(0,0).diagonal().transpose() << std::endl;
-    std::cout << "  acc:   " << Q_d_measurement.block<3,3>(3,3).diagonal().transpose() << std::endl;
-    std::cout << "  v_virt:" << Q_d_measurement.block<3,3>(6,6).diagonal().transpose() << std::endl;
-    std::cout << "  t_virt:" << Q_d_measurement(9,9) << std::endl;
-    std::cout << "  bias:  " << Q_d_measurement.diagonal().tail<10>().transpose() << std::endl;
+    std::cout << "Q_d matrix shape: " << Q_d.rows() << "x" << Q_d.cols() << std::endl;
+    std::cout << "Q_d trace: " << Q_d.trace() << std::endl;
 
     // Update covariance
-    std::cout << "\nCov_old (preintMeasCov_ BEFORE update):" << std::endl;
-    std::cout << "  diagonal sum: " << preintMeasCov_.diagonal().sum() << std::endl;
-    std::cout << "  trace: " << preintMeasCov_.trace() << std::endl;
-    std::cout << "  norm: " << preintMeasCov_.norm() << std::endl;
-
     preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d * B.transpose();
-
-    // incase we want to round to 2 for numerical stability
-    const double epsilon = 1e-17;  // Adjust based on your precision needs
-    for (int i = 0; i < 20; i++) {
-        for (int j = 0; j < 20; j++) {
-            if (std::abs(preintMeasCov_(i, j)) < epsilon) {
-                preintMeasCov_(i, j) = 0.0;
-            }
-        }
-    }
-    // preintMeasCov_ = 0.5 * (preintMeasCov_ + preintMeasCov_.transpose());
-
-    // preintMeasCov_ = 0.5 * (preintMeasCov_ + preintMeasCov_.transpose());
-    // preintMeasCov_ = A * preintMeasCov_ * A.transpose() + B * Q_d_measurement * B.transpose();
-
-    std::cout << "\nCov_new (preintMeasCov_ AFTER update):" << std::endl;
-    std::cout << "  diagonal sum: " << preintMeasCov_.diagonal().sum() << std::endl;
-    std::cout << "  trace: " << preintMeasCov_.trace() << std::endl;
-    std::cout << "  norm: " << preintMeasCov_.norm() << std::endl;
-
-    // Debug: Show the contribution of the two terms in covariance update
-    Matrix20 term1 = A * preintMeasCov_ * A.transpose();
-    Matrix20 term2 = B * Q_d * B.transpose();
-    std::cout << "\nA*Cov*A^T contribution:" << std::endl;
-    std::cout << "  trace: " << term1.trace() << std::endl;
-    std::cout << "  norm: " << term1.norm() << std::endl;
-    std::cout << "\nB*Q*B^T contribution:" << std::endl;
-    std::cout << "  trace: " << term2.trace() << std::endl;
-    std::cout << "  norm: " << term2.norm() << std::endl;
 
     // Update bias Jacobian
     Matrix20 Phi_b = Matrix20::Identity();
     Phi_b.block<10, 10>(0, UPS_DIM) = -K;
     preintBiasJacobian_ = Phi_b * preintBiasJacobian_;
 
-    std::cout << "\nJacobians updated successfully" << std::endl;
-    std::cout << "===== END integrateMeasurement DEBUG =====\n" << std::endl;
+    // Ensure numerical stability
+    preintMeasCov_ = 0.5 * (preintMeasCov_ + preintMeasCov_.transpose());
+
+    std::cout << "Covariance matrix change norm: " << (preintMeasCov_ - old_cov).norm() << std::endl;
+    std::cout << "Jacobian matrix change norm: " << (preintBiasJacobian_ - old_jac).norm() << std::endl;
+
+    // Print matrix blocks
+    std::cout << "Covariance block [0:3, 0:3]:\n" << preintMeasCov_.block<3,3>(0,0) << std::endl;
+    std::cout << "Jacobian block [0:3, 0:3]:\n" << preintBiasJacobian_.block<3,3>(0,0) << std::endl;
+
+    std::cout << "=== END C++ INTEGRATION ===" << std::endl;
 }
+
 
 
 Vector9 PreintegratedGalileanMeasurements::biasCorrectedDelta(

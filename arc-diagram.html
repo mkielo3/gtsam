@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>IMU Preintegration Arc Diagram</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    #arc-diagram {
+      width: 100%;
+      height: 800px;
+      margin-bottom: 10px;
+    }
+    .node text {
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .node .shape {
+      stroke: #fff;
+    }
+    .link {
+      fill: none;
+      stroke-opacity: 0.6;
+    }
+    .tooltip {
+      position: absolute;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #node-description {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+      min-height: 100px;
+      transition: all 0.3s ease;
+    }
+    #node-description.empty {
+      color: #999;
+      font-style: italic;
+    }
+    #description-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 0;
+      margin-bottom: 10px;
+      color: #333;
+    }
+    #description-content {
+      font-size: 14px;
+      line-height: 1.5;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h2>Inside a Galilean IMU Preintegration Cycle</h2>
+  <div id="arc-diagram"></div>
+  
+  <div id="node-description">
+    <h3 id="description-title">Node Description</h3>
+    <p id="description-content">Hover over a node to see its description.</p>
+  </div>
+
+  <script>
+    // Set the dimensions and margins of the graph
+    const margin = {top: 40, right: 60, bottom: 140, left: 60};
+    const width = 1200 - margin.left - margin.right;
+    const height = 700 - margin.top - margin.bottom;
+
+    // Append the svg object to the body of the page
+    const svg = d3.select("#arc-diagram")
+      .append("svg")
+        .attr("viewBox", [0, 0, width + margin.left + margin.right, height + margin.top + margin.bottom])
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Create a tooltip div
+    const tooltip = d3.select("body")
+      .append("div")
+      .attr("class", "tooltip");
+
+    // Define the data structure based on the Mermaid diagram
+	const nodes = [
+    // Configuration/Parameters
+    { id: "noise_params", name: "Noise covariance parameters", group: "purple", shape: "square", cluster: 1 },
+    { id: "bias", name: "Current bias estimate b (R^6)", group: "purple", shape: "circle", cluster: 1},
+
+
+    // State variables
+    { id: "Uprev", name: "Prev mean ΔU_prev (SGal3)", group: "green", shape: "triangle", cluster: 2 },
+    { id: "Pprev", name: "Prev covariance P_prev", group: "green", shape: "square", cluster: 2 },
+    { id: "prevBiasJac", name: "Prev bias Jacobian", group: "green", shape: "square", cluster: 2 },
+
+    // Input measurements
+    { id: "acc", name: "Accelerometer a (R^3)", group: "red", shape: "circle", cluster: 3 },
+    { id: "gyro", name: "Gyroscope ω (R^3)", group: "red", shape: "circle", cluster: 3 },
+    { id: "dt", name: "Δt", group: "red", shape: "circle", cluster: 3 },
+        
+    // Intermediate computations
+    // { id: "meas", name: "Unbias & assemble ŵ (10D)", group: "orange", shape: "circle", cluster: 4 },
+	{ id: "scaled_meas", name: "Scaled measurements (w - b) * dt", group: "orange", shape: "diamond", cluster: 4 },
+	// { id: "exp_map", name: "exp((w - b) * dt)", group: "orange", shape: "triangle", cluster: 4 },
+
+
+    { id: "lj", name: "Left Jacobian J_L(ξ)", group: "orange", shape: "square", cluster: 4 },
+    { id: "Q_d", name: "Noise covariance Q_d", group: "orange", shape: "square", cluster: 4 },
+    { id: "Phi_b", name: "Φ_b (bias update)", group: "orange", shape: "square", cluster: 4 },
+    
+    // Output variables
+    { id: "Unew", name: "ΔU_new = ΔU_prev ∘ Δ", group: "blue", shape: "triangle", cluster: 5 },
+    { id: "outP", name: "Output P_new", group: "blue", shape: "square", cluster: 5 },
+    { id: "newBiasJac", name: "Updated bias Jacobian", group: "blue", shape: "square", cluster: 5 },
+];
+const links = [
+    // Measurement processing
+    // Measurement processing
+    { source: "acc", target: "scaled_meas" },
+    { source: "gyro", target: "scaled_meas" },
+    { source: "bias", target: "scaled_meas", label: "remove bias" },
+    
+    // Lie algebra/group operations
+
+    // Group composition
+    { source: "Uprev", target: "Unew" },
+    
+    // Noise covariance
+    { source: "noise_params", target: "Q_d" },
+    { source: "dt", target: "Q_d" },
+    
+	// { source: "scaled_meas", target: "exp_map", label: "exponential map" },
+	{ source: "scaled_meas", target: "Unew", label: "compose" },
+	// { source: "meas", target: "scaled_meas" },
+	{ source: "dt", target: "scaled_meas", label: "scale by dt" },
+
+{ source: "scaled_meas", target: "lj", label: "J_L((w-b)*dt)" },
+{ source: "scaled_meas", target: "outP", label: "via adjoint" },
+// { source: "scaled_meas", target: "Phi_b" },
+
+
+    // Covariance update - direct connections after removing A and B
+    { source: "lj", target: "outP" },
+    { source: "Uprev", target: "outP", label: "via adjoint" },
+    { source: "scaled_meas", target: "outP", label: "via adjoint" },
+    { source: "Pprev", target: "outP" },
+    { source: "Q_d", target: "outP" },
+    { source: "dt", target: "outP" },
+    
+    // Bias Jacobian update - direct connections after removing K
+    { source: "Uprev", target: "Phi_b", label: "via adjoint" },
+    { source: "lj", target: "Phi_b" },
+    { source: "dt", target: "Phi_b" },
+    { source: "prevBiasJac", target: "newBiasJac" },
+    { source: "Phi_b", target: "newBiasJac" }
+];
+
+    // A color scale for groups
+    const color = d3.scaleOrdinal()
+  .domain(["red", "green", "blue", "orange", "purple"])
+  .range(["#F8CECC", "#D5E8D4", "#DAE8FC", "#FFE6CC", "#E1D5E7"]);
+
+    // A stroke color scale for groups
+    const strokeColor = d3.scaleOrdinal()
+  .domain(["red", "green", "blue", "orange", "purple"])
+  .range(["#B85450", "#82A366", "#6C8EBF", "#D79B00", "#9673A6"]);
+
+
+    // Improved positioning function with much tighter spacing and no left padding
+    function getNodePosition(nodeId) {
+      // Group nodes by cluster
+      const clusterNodes = {};
+      nodes.forEach(n => {
+        if (!clusterNodes[n.cluster]) clusterNodes[n.cluster] = [];
+        clusterNodes[n.cluster].push(n.id);
+      });
+      
+      // Count clusters and total nodes
+      const clusterCount = Object.keys(clusterNodes).length;
+      
+      // Calculate spacing (adjusted for tighter horizontal layout - 50% reduction)
+      const betweenClusterSpacing = width / (clusterCount + 0.5) / 3;
+      const withinClusterSpacing = betweenClusterSpacing * 0.5;
+      
+      // Calculate positions
+      const nodePositions = {};
+      
+      // First calculate total width needed
+      let totalWidth = 0;
+      Object.entries(clusterNodes).forEach(([cluster, nodeIds]) => {
+        if (nodeIds.length > 1) {
+          totalWidth += (nodeIds.length - 1) * withinClusterSpacing;
+        }
+        if (cluster !== "1") { // Skip before first cluster
+          totalWidth += betweenClusterSpacing;
+        }
+      });
+      
+      // Start from the left edge with minimal padding
+      let startPosition = 30; // Increased left padding
+      
+      // For each cluster
+      Object.entries(clusterNodes).forEach(([cluster, nodeIds]) => {
+        // Position each node in the cluster
+        nodeIds.forEach((id, i) => {
+          nodePositions[id] = startPosition + (i * withinClusterSpacing);
+        });
+        
+        // Move to the next cluster position
+        startPosition += (nodeIds.length - 1) * withinClusterSpacing + betweenClusterSpacing;
+      });
+      
+      return nodePositions[nodeId];
+    }
+
+    // A linear scale to position the nodes on the X axis (as fallback)
+    const x = d3.scalePoint()
+      .range([0, width])
+      .domain(nodes.map(d => d.id));
+
+    // Initialize node positions
+    nodes.forEach(d => {
+      d.x = getNodePosition(d.id);
+      d.y = height/2;
+    });
+
+    // Add the links
+    const link = svg.selectAll('.link')
+      .data(links)
+      .join('path')
+      .attr('class', 'link')
+      .style('stroke', '#999')
+      .style('stroke-width', 1.5);
+
+    // Add the nodes
+    const node = svg.selectAll('.node')
+      .data(nodes)
+      .join('g')
+      .attr('class', 'node')
+      .attr('transform', d => `translate(${d.x},${height/2})`);
+
+    // Function to create a shape based on the shape attribute
+    function createShape(selection) {
+      selection.each(function(d) {
+        const shape = d3.select(this);
+        const size = 10; // Base size for all shapes
+        const strokeWidth = 2; // Consistent normal border for all shapes
+        
+        if (d.shape === 'circle') {
+          shape.append('circle')
+            .attr('class', 'shape')
+            .attr('r', size)
+            .style('fill', color(d.group))
+            .style('stroke', strokeColor(d.group))
+            .style('stroke-width', strokeWidth);
+        } 
+        else if (d.shape === 'square') {
+          shape.append('rect')
+            .attr('class', 'shape')
+            .attr('width', size * 2)
+            .attr('height', size * 2)
+            .attr('x', -size)
+            .attr('y', -size)
+            .style('fill', color(d.group))
+            .style('stroke', strokeColor(d.group))
+            .style('stroke-width', strokeWidth);
+        } 
+        else if (d.shape === 'triangle') {
+          const triangleSize = size * 1.5;
+          const trianglePath = d3.symbol()
+            .type(d3.symbolTriangle)
+            .size(triangleSize * triangleSize);
+            
+          shape.append('path')
+            .attr('class', 'shape')
+            .attr('d', trianglePath)
+            .attr('transform', 'translate(0, 4)')
+            .style('fill', color(d.group))
+            .style('stroke', strokeColor(d.group))
+            .style('stroke-width', strokeWidth);
+        }
+        else if (d.shape === 'diamond') {
+          const diamondSize = size * 1.5;
+          const diamondPath = d3.symbol()
+            .type(d3.symbolDiamond)
+            .size(diamondSize * diamondSize);
+            
+          shape.append('path')
+            .attr('class', 'shape')
+            .attr('d', diamondPath)
+            .style('fill', color(d.group))
+            .style('stroke', strokeColor(d.group))
+            .style('stroke-width', strokeWidth);
+        }
+      });
+    }
+
+    // Add shapes to the nodes
+    node.append('g')
+      .call(createShape)
+      .each(function(d) {
+        // Store reference to the node element
+        d.element = this;
+      });
+
+    // Add labels to the nodes
+    node.append('text')
+      .attr('dy', 25)
+      .attr('text-anchor', 'start')
+      .attr('transform', 'rotate(45)')
+      .text(d => d.id)
+      .style('font-size', '15px');
+
+    // Add a legend for colors (groups) - moved further right
+    const colorLegend = svg.append('g')
+      .attr('transform', `translate(${width - 160}, 20)`);
+      
+    const colorLegendData = [
+	  { group: "purple", label: "System Parameters" },
+	  { group: "green", label: "State Variables" },
+  { group: "red", label: "Input Measurements" },
+  { group: "orange", label: "Intermediate Calculations" },
+  { group: "blue", label: "Output Variables" }
+    ];
+
+    
+    colorLegendData.forEach((d, i) => {
+      const legendRow = colorLegend.append('g')
+        .attr('transform', `translate(0, ${i * 20})`);
+        
+      legendRow.append('rect')
+        .attr('width', 15)
+        .attr('height', 15)
+        .attr('fill', color(d.group))
+        .attr('stroke', strokeColor(d.group));
+        
+      legendRow.append('text')
+        .attr('x', 20)
+        .attr('y', 12)
+        .text(d.label);
+    });
+
+    // Add a legend for shapes - moved further right
+    const shapeLegend = svg.append('g')
+      .attr('transform', `translate(${width - 160}, 120)`);
+      
+    const shapeLegendData = [
+      { shape: "circle", label: "Euclidean Vectors (ℝⁿ)" },
+      { shape: "square", label: "Matrix Spaces" },
+      { shape: "triangle", label: "Lie Groups (Gal(3))" },
+      { shape: "diamond", label: "Lie Algebras (gal(3))" }
+    ];
+    
+    shapeLegendData.forEach((d, i) => {
+      const legendRow = shapeLegend.append('g')
+        .attr('transform', `translate(0, ${i * 20})`);
+      
+      const strokeWidth = 2; // Consistent border width for all shapes
+      
+      if (d.shape === 'circle') {
+        legendRow.append('circle')
+          .attr('r', 7.5)
+          .attr('cx', 7.5)
+          .attr('cy', 7.5)
+          .attr('fill', '#ccc')
+          .attr('stroke', '#999')
+          .attr('stroke-width', strokeWidth);
+      } else if (d.shape === 'square') {
+        legendRow.append('rect')
+          .attr('width', 15)
+          .attr('height', 15)
+          .attr('fill', '#ccc')
+          .attr('stroke', '#999')
+          .attr('stroke-width', strokeWidth);
+      } else if (d.shape === 'triangle') {
+        const trianglePath = d3.symbol()
+          .type(d3.symbolTriangle)
+          .size(100);
+          
+        legendRow.append('path')
+          .attr('d', trianglePath)
+          .attr('transform', 'translate(7.5, 7.5)')
+          .attr('fill', '#ccc')
+          .attr('stroke', '#999')
+          .attr('stroke-width', strokeWidth);
+      } else if (d.shape === 'diamond') {
+        const diamondPath = d3.symbol()
+          .type(d3.symbolDiamond)
+          .size(100);
+          
+        legendRow.append('path')
+          .attr('d', diamondPath)
+          .attr('transform', 'translate(7.5, 7.5)')
+          .attr('fill', '#ccc')
+          .attr('stroke', '#999')
+          .attr('stroke-width', strokeWidth);
+      }
+      
+      legendRow.append('text')
+        .attr('x', 25)
+        .attr('y', 12)
+        .text(d.label);
+    });
+
+    // Drag functions
+    function drag() {
+      function dragstarted(event, d) {
+        d3.select(this).raise();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+      
+      function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+        d3.select(this).attr("transform", `translate(${event.x},${event.y})`);
+        updateLinks();
+      }
+      
+      function dragended(event, d) {
+        d.fx = null;
+        d.fy = null;
+      }
+      
+      return d3.drag()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended);
+    }
+
+    // Enable node dragging
+    node.call(drag());
+
+    // Function to update link positions
+    function updateLinks() {
+      link.attr('d', function(d) {
+        const sourceNode = nodes.find(n => n.id === d.source);
+        const targetNode = nodes.find(n => n.id === d.target);
+        const start = sourceNode.x || getNodePosition(sourceNode.id);
+        const end = targetNode.x || getNodePosition(targetNode.id);
+        const startY = sourceNode.y || height/2;
+        const endY = targetNode.y || height/2;
+        const arcHeight = 50 + Math.abs(start - end) * 0.2;
+        return `M${start},${startY} A${Math.abs(start - end)/2},${arcHeight} 0 0,${start < end ? 1 : 0} ${end},${endY}`;
+      });
+    }
+
+    // Initial update of links
+    updateLinks();
+
+    // Create a variable to track the currently highlighted node
+    let currentHighlightedNodeId = null;
+
+    // Sample descriptions for the nodes
+    const nodeDescriptions = {
+      "noise_params": "Parameters controlling the noise model for IMU measurements. These parameters define how sensor noise is modeled in the preintegration process, affecting the uncertainty estimates.",
+      "bias": "Current estimate of accelerometer and gyroscope biases. These biases represent systematic errors in the IMU measurements that need to be accounted for during preintegration.",
+      "Uprev": "Previous mean estimate of the relative pose in the Galilean group. This represents the accumulated transformation between two time points in the Galilean group framework.",
+      "Pprev": "Previous covariance matrix for the state estimate. This matrix quantifies the uncertainty in the previous state estimate, crucial for proper uncertainty propagation.",
+      "prevBiasJac": "Jacobian matrix relating bias changes to state changes. This matrix is used to update the state when bias estimates change.",
+      "acc": "Raw accelerometer measurements in 3D space. These measurements capture the linear acceleration of the IMU sensor, including gravity.",
+      "gyro": "Raw gyroscope measurements in 3D space. These measurements capture the angular velocity of the IMU sensor.",
+      "dt": "Time step between consecutive IMU measurements. This value is used to integrate velocity and position over time.",
+      "meas": "Unbiased and assembled measurement vector. This vector combines the corrected accelerometer and gyroscope measurements after removing estimated biases.",
+      "scaled_meas": "Scaled measurement vector in the tangent space. This is the unbiased measurement vector scaled by the time step, representing the instantaneous change in the Galilean group.",
+      "exp_map": "Result of the exponential map applied to the scaled measurements. This transforms the tangent space element into an element of the Galilean group.",
+      "lj": "Left Jacobian of the exponential map evaluated at xi. This Jacobian relates changes in the tangent space to changes in the group space.",
+      "Q_d": "Discrete-time noise covariance matrix. This matrix represents how sensor noise propagates into state uncertainty over a discrete time step.",
+      "Phi_b": "State transition matrix for bias update. This matrix defines how the bias estimates evolve over time.",
+      "Unew": "Updated mean estimate of the relative pose. This is the new accumulated transformation after incorporating the latest measurements.",
+      "outP": "Updated covariance matrix for the state estimate. This matrix quantifies the uncertainty in the updated state estimate.",
+      "newBiasJac": "Updated Jacobian matrix for bias estimation. This matrix is used in the next preintegration cycle for bias correction."
+    };
+
+    // Function to highlight a node and update description
+    function highlightNode(nodeId, scrollToNode = true) {
+      // Clear any existing highlighting first
+      clearHighlighting();
+      
+      // Set the current highlighted node
+      currentHighlightedNodeId = nodeId;
+      
+      // Find the node data and element
+      let nodeData, nodeElement;
+      node.each(function(d) {
+        if (d.id === nodeId) {
+          nodeData = d;
+          nodeElement = this;
+        }
+      });
+      
+      if (nodeData && nodeElement) {
+        // Highlight the node shape
+        const shape = d3.select(nodeElement).select('g').select('.shape');
+        
+        if (nodeData.shape === 'circle') {
+          shape.attr('r', 15)
+            .style('stroke-width', 3);
+        } else if (nodeData.shape === 'square') {
+          shape
+            .attr('width', 30)
+            .attr('height', 30)
+            .attr('x', -15)
+            .attr('y', -15)
+            .style('stroke-width', 3);
+        } else if (nodeData.shape === 'triangle') {
+          const largerTriangle = d3.symbol()
+            .type(d3.symbolTriangle)
+            .size(22.5 * 22.5);
+          shape
+            .attr('d', largerTriangle)
+            .attr('transform', 'translate(0, 4)')
+            .style('stroke-width', 3);
+        } else if (nodeData.shape === 'diamond') {
+          const largerDiamond = d3.symbol()
+            .type(d3.symbolDiamond)
+            .size(22.5 * 22.5);
+          shape
+            .attr('d', largerDiamond)
+            .style('stroke-width', 3);
+        }
+        
+        // Highlight the label
+        d3.select(nodeElement).select('text')
+          .style('font-size', '24px')
+          .style('font-weight', 'bold');
+        
+        // Highlight connected links
+        link
+          .style('stroke', function(l) {
+            if (l.source === nodeId || l.target === nodeId) {
+              return '#000000';
+            } else {
+              return '#999';
+            }
+          })
+          .style('stroke-opacity', function(l) {
+            if (l.source === nodeId || l.target === nodeId) {
+              return 1;
+            } else {
+              return 0.3;
+            }
+          })
+          .style('stroke-width', function(l) {
+            if (l.source === nodeId || l.target === nodeId) {
+              return 4;
+            } else {
+              return 1.5;
+            }
+          });
+        
+        // Update the description area
+        const descriptionTitle = document.getElementById('description-title');
+        const descriptionContent = document.getElementById('description-content');
+        const descriptionContainer = document.getElementById('node-description');
+        
+        descriptionTitle.textContent = nodeData.id + ': ' + nodeData.name;
+        descriptionContent.textContent = nodeDescriptions[nodeData.id] || 
+          "No detailed description available for this node.";
+        descriptionContainer.classList.remove('empty');
+        
+        // Scroll to the node if requested
+        if (scrollToNode && nodeElement) {
+          try {
+            nodeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } catch (e) {
+            console.log("Could not scroll to node:", e);
+          }
+        }
+      }
+    }
+
+    // Function to clear all highlighting
+    function clearHighlighting() {
+      // Reset current highlighted node
+      currentHighlightedNodeId = null;
+      
+      // Reset node shapes
+      node.selectAll('g').each(function(d) {
+        const currentShape = d3.select(this).select('.shape');
+        
+        if (d.shape === 'circle') {
+          currentShape.attr('r', 10)
+            .style('stroke-width', 2);
+        } else if (d.shape === 'square') {
+          currentShape
+            .attr('width', 20)
+            .attr('height', 20)
+            .attr('x', -10)
+            .attr('y', -10)
+            .style('stroke-width', 2);
+        } else if (d.shape === 'triangle') {
+          const originalTriangle = d3.symbol()
+            .type(d3.symbolTriangle)
+            .size(15 * 15);
+          currentShape
+            .attr('d', originalTriangle)
+            .attr('transform', 'translate(0, 4)')
+            .style('stroke-width', 2);
+        } else if (d.shape === 'diamond') {
+          const originalDiamond = d3.symbol()
+            .type(d3.symbolDiamond)
+            .size(15 * 15);
+          currentShape
+            .attr('d', originalDiamond)
+            .style('stroke-width', 2);
+        }
+      });
+      
+      // Reset labels
+      node.selectAll('text')
+        .style('font-size', '15px')
+        .style('font-weight', 'normal');
+      
+      // Reset links
+      link
+        .style('stroke', '#999')
+        .style('stroke-opacity', 0.6)
+        .style('stroke-width', 1.5);
+      
+      // Reset description area
+      const descriptionTitle = document.getElementById('description-title');
+      const descriptionContent = document.getElementById('description-content');
+      const descriptionContainer = document.getElementById('node-description');
+      
+      descriptionTitle.textContent = 'Node Description';
+      descriptionContent.textContent = 'Hover over a node to see its description.';
+      descriptionContainer.classList.add('empty');
+        
+      // Hide tooltip
+      tooltip.transition()
+        .duration(200)
+        .style('opacity', 0);
+    }
+
+    // Add click event to SVG background to clear highlighting
+    d3.select('#arc-diagram svg').on('click', function(event) {
+      // Only clear if clicking directly on the SVG background
+      if (event.target === this) {
+        clearHighlighting();
+      }
+    });
+
+    // Add hover and click handlers to nodes
+    node.on('mouseover', function(event, d) {
+      // Show tooltip
+      tooltip.transition()
+        .duration(200)
+        .style('opacity', .9);
+      tooltip.html(d.name)
+        .style('left', (event.pageX + 10) + 'px')
+        .style('top', (event.pageY - 28) + 'px');
+        
+      // Highlight node on hover
+      highlightNode(d.id, false); // Highlight node, don't scroll to node
+    }).on('mouseout', function() {
+      // Clear highlighting when mouse leaves the node
+      clearHighlighting();
+      
+      // Hide tooltip
+      tooltip.transition()
+        .duration(500)
+        .style('opacity', 0);
+    }).on('click', function(event) {
+      // Stop propagation to prevent the svg background click from firing
+      event.stopPropagation();
+    });
+
+    // Set initial state of description area
+    document.getElementById('node-description').classList.add('empty');
+  </script>
+</body>
+</html> 

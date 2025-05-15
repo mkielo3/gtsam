@@ -334,39 +334,60 @@ Vector10 Gal3::Logmap(const Gal3& g, OptionalJacobian<10, 10> Hg_out) {
 
 //------------------------------------------------------------------------------
 Matrix10 Gal3::AdjointMap() const {
-    // Implements adjoint map Ad_g as in Equation 26, Page 9
-    const Matrix3 Rmat = R_.matrix();
-    const Vector3 v_vec = v_; // Already Vector3
-    const Vector3 r_minus_tv = Vector3(r_) - t_ * v_; // r - t*v
+    // Implements adjoint map Ad_g as in Equation 26, Page 9 in Kelly's paper
+    // The adjoint map transforms a tangent vector from one point to another point in the manifold
+    // Tangent space ordering: [rho, nu, theta, t] (position, velocity, rotation, time)
 
+    const Matrix3 Rmat = R_.matrix();  // Rotation matrix
+    const Vector3 v_vec = v_;          // Velocity vector
+    const Vector3 r_minus_tv = Vector3(r_) - t_ * v_;  // Position minus time*velocity (key term for Galilean coupling)
+
+    // Initialize adjoint matrix with zeros to ensure correct structure
     Matrix10 Ad = Matrix10::Zero();
 
-    // Block (0,0) to (2,2) : R
+    // Position to position coupling
+    // Ad_g: rho → rho = R
     Ad.block<3,3>(0,0) = Rmat;
-    // Block (0,3) to (2,5) : -t*R
+
+    // Position to velocity coupling (time effect on position via velocity)
+    // Ad_g: nu → rho = -t*R (crucial time coupling term)
     Ad.block<3,3>(0,3) = -t_ * Rmat;
-    // Block (0,6) to (2,8) : [r-tv]_x * R
+
+    // Position to rotation coupling (effect of rotation on position via the modified lever arm)
+    // Ad_g: theta → rho = [(r-tv)]x*R (involves time-velocity coupling)
     Ad.block<3,3>(0,6) = skewSymmetric(r_minus_tv) * Rmat;
-    // Block (0,9) to (2,9) : v
+
+    // Position to time coupling (direct effect of time-derivative on position)
+    // Ad_g: t → rho = v (velocity appears in position time-derivative)
     Ad.block<3,1>(0,9) = v_vec;
 
-    // Block (3,3) to (5,5) : R
+    // Velocity to velocity coupling
+    // Ad_g: nu → nu = R
     Ad.block<3,3>(3,3) = Rmat;
-    // Block (3,6) to (5,8) : [v]_x * R
+
+    // Velocity to rotation coupling (effect of rotation on velocity via Coriolis force)
+    // Ad_g: theta → nu = [v]x*R
     Ad.block<3,3>(3,6) = skewSymmetric(v_vec) * Rmat;
 
-    // Block (6,6) to (8,8) : R
+    // Rotation to rotation coupling
+    // Ad_g: theta → theta = R
     Ad.block<3,3>(6,6) = Rmat;
 
-    // IDK if these are necessary? they break all the tests.
-    // Ad.block<3,3>(6,3) = -t_ * Rmat;
-    // Ad.block<3,1>(6,9) = v_;
-
-    // Block (9,9) : 1
+    // Time to time coupling
+    // Ad_g: t → t = 1
     Ad(9,9) = 1.0;
+
+    // Zero blocks (all other couplings are zero):
+    // - Velocity to position: Ad.block<3,3>(3,0) = 0
+    // - Velocity to time: Ad.block<3,1>(3,9) = 0
+    // - Rotation to position: Ad.block<3,3>(6,0) = 0
+    // - Rotation to velocity: Ad.block<3,3>(6,3) = 0
+    // - Rotation to time: Ad.block<3,1>(6,9) = 0
+    // - Time to position/velocity/rotation: Ad.block<1,9>(9,0) = 0
 
     return Ad;
 }
+
 
 
 //------------------------------------------------------------------------------
